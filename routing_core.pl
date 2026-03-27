@@ -1,7 +1,7 @@
 :- module(routing_core, [
     is_routing_valid/2,
     find_valid_paths/2,
-    search_path/4, 
+    search_path/8, 
     path_latency/3
 ]).
 
@@ -30,21 +30,16 @@ is_routing_valid(FlowId, PathId) :-
     Latency =< MaxLatency.
 
 %% find_valid_paths(+FlowID, -Path)
-% Trova tutti i percorsi che rispettano il vincolo di latenza.
-find_valid_paths(FlowID, Path) :-
-    flow(FlowID, SrcService, DstService, MaxLatency, RateInHz),
+% Trova tutti i percorsi che rispettano il vincolo di latenza e banda.
+find_valid_paths(FlowId, Path) :-
+    flow(FlowId, SrcService, DstService, MaxLatency, RateInHz),
     host(SrcHost, SrcServices), member(SrcService, SrcServices),
     host(DstHost, DstServices), member(DstService, DstServices),
-    search_path(SrcHost, DstHost, [SrcHost], Path),
 
-    % 1. CONTROLLO BANDA: Verifica che ogni link del path abbia banda sufficiente
     pcktSize(PcktSize),
     RequiredBw is RateInHz * PcktSize,
-    check_path_bandwidth(FlowID, Path, RequiredBw),
-    
-    % 2. CONTROLLO LATENZA: Verifica che la latenza totale del path sia inferiore al massimo consentito
-    path_latency_nodes(FlowID, Path, 0, Latency),
-    Latency =< MaxLatency.
+
+    search_path(FlowId, RequiredBw, SrcHost, DstHost, [SrcHost], Path, 0, MaxLatency).
 
 % --- BANDWIDTH LOGIC ---
 
@@ -83,7 +78,7 @@ path_latency(FlowId, PathId, Latency) :-
 path_latency_nodes(FlowId, [Node1, Node2 | Rest], Acc, Latency) :-
     s_link(Node1, Node2, Bandwidth, Length),
 
-    available_bandwidth(_, Node1, Node2, Bandwidth, EffectiveBw), % Considera la banda residua per il calcolo della latenza
+    available_bandwidth(FlowId, Node1, Node2, Bandwidth, EffectiveBw), % Considera la banda residua per il calcolo della latenza
     EffectiveBw > 0, % Se la banda residua è zero, il link è congestionato e la latenza è infinita (fallisce)
 
     node_qtime(Node1, QTime1), 
@@ -102,13 +97,30 @@ node_qtime(Node, QTime) :- router(Node, QTime).
 
 % --- PATHFINDING ---
 
-search_path(Dst, Dst, Visited, Path) :-
+search_path(FlowId, RequiredBw, Dst, Dst, Visited, Path, CurrLatency, MaxLatency) :-
     reverse(Visited, Path).
 
-search_path(Current, Dst, Visited, Path) :-
-    s_link(Current, Next, _, _),
+% Ricerca ricorsiva di un percorso che soddisfi i QoS
+search_path(FlowId, RequiredBw, Current, Dst, Visited, Path, CurrLatency, MaxLatency) :-
+    s_link(Current, Next, Bandwidth, Length),
     \+ member(Next, Visited),
-    search_path(Next, Dst, [Next|Visited], Path).
+
+    % Calcola la nuova latenza accumulata
+    speedOfLight(SpeedOfLight),
+    pcktSize(PcktSize),
+
+    available_bandwidth(FlowId, Current, Next, Bandwidth, EffectiveBw),
+    EffectiveBw >= RequiredBw,
+
+    node_qtime(Current, QTime1),
+    Dtrasm is PcktSize / EffectiveBw,
+    Dprop is Length / SpeedOfLight,
+    NewLatency is CurrLatency + Dtrasm + Dprop + QTime1,
+
+    % Verifica che la latenza non superi il limite
+    NewLatency =< MaxLatency,
+
+    search_path(FlowId, RequiredBw, Next, Dst, [Next|Visited], Path, NewLatency, MaxLatency).
 
 % --- UTILS ---
 

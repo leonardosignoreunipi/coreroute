@@ -16,6 +16,7 @@ link(h1, r1, 1500, 10).
 link(r1, r2, 1500, 10).
 link(r2, h2, 1500, 10).
 
+
 % Flows and predefined paths
 path(p1, h1, h2, [h1, r1, r2, h2]).
 
@@ -23,4 +24,3 @@ flow(f1, s1, s2, 15, 1).
 flow(f2, s1, s2, 15, 1).
 
 routing(f1, p1).
-routing(f2, p1).
