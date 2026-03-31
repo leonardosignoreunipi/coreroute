@@ -2,12 +2,65 @@
     is_routing_valid/2,
     find_valid_paths/2,
     search_path/8, 
-    path_latency/3
+    path_latency/3, 
+    partition/2, 
+    crRouting/3 
 ]).
 
-:- consult('network_topology.pl'). % Carica i dati della rete
+:- consult('network_topology.pl').
+
+:- dynamic routing/2.
+:- dynamic path/4. 
 
 % --- CORE LOGIC ---
+
+%% partition(AllFlows, OkFlows, KoFlows) :- findall(r(F,R), rOk(F,R), OkFlows), subtract(AllFlows, OkFlows, KoFlows).
+% Divide i routing in validi e non validi
+partition(OkFlows, KoFlows) :-
+    findall(
+        routing(FlowId, PathId),
+        is_routing_valid(FlowId, PathId),
+        OkFlows), 
+    findall(
+        routing(FlowId, PathId),
+        (
+            routing(FlowId, PathId),            
+            \+ is_routing_valid(FlowId, PathId) 
+        ),
+        KoFlows).
+
+
+%% crRouting(+OkFlows, +KoFlows, -NewValidRouting) :- ...
+%costruisce a partire da un vecchio routing un nuovo routing valido, riallocando i flussi non validi su percorsi alternativi, se esistono
+crRouting(OkFlows, KoFlows, NewValidRouting) :-
+    retract_ko_flows(KoFlows),
+    reallocate_ko_flows(KoFlows, OkFlows, NewValidRouting). 
+
+reallocate_ko_flows([], AccRouting, AccRouting).
+
+reallocate_ko_flows([routing(FlowId, _) | Tail], AccRouting, FinalRouting) :- 
+    ( find_valid_paths(FlowId, Path) ->
+
+        gensym(new_p, NewPathId),
+
+        Path = [SrcHost|_], last(Path, DstHost),
+
+        assertz(path(NewPathId, SrcHost, DstHost, Path)),
+
+        assertz(routing(FlowId, NewPathId)), 
+        
+        reallocate_ko_flows(Tail, [routing(FlowId, NewPathId) | AccRouting], FinalRouting)
+    ;
+        
+        reallocate_ko_flows(Tail, AccRouting, FinalRouting)
+    ).
+
+    
+% Rimuove i routing non validi dalla KB 
+retract_ko_flows([]). 
+retract_ko_flows([routing(FlowId, _) | Tail]) :-
+    retractall((routing(FlowId, _))), 
+    retract_ko_flows(Tail).
 
 %% is_routing_valid(+FlowId, +PathId)
 % Verifica se un routing assegnato è valido per i requisiti del flusso
@@ -78,8 +131,8 @@ path_latency(FlowId, PathId, Latency) :-
 path_latency_nodes(FlowId, [Node1, Node2 | Rest], Acc, Latency) :-
     s_link(Node1, Node2, Bandwidth, Length),
 
-    available_bandwidth(FlowId, Node1, Node2, Bandwidth, EffectiveBw), % Considera la banda residua per il calcolo della latenza
-    EffectiveBw > 0, % Se la banda residua è zero, il link è congestionato e la latenza è infinita (fallisce)
+    available_bandwidth(FlowId, Node1, Node2, Bandwidth, EffectiveBw), 
+    EffectiveBw > 0,
 
     node_qtime(Node1, QTime1), 
     speedOfLight(SpeedOfLight), 
@@ -96,11 +149,10 @@ node_qtime(Node, 0) :- host(Node, _).
 node_qtime(Node, QTime) :- router(Node, QTime).
 
 % --- PATHFINDING ---
-
-search_path(FlowId, RequiredBw, Dst, Dst, Visited, Path, CurrLatency, MaxLatency) :-
+search_path(_, _, Dst, Dst, Visited, Path, _, _) :- 
     reverse(Visited, Path).
 
-% Ricerca ricorsiva di un percorso che soddisfi i QoS
+% Ricerca ricorsiva di un percorso che soddisfi i QoS effettua i controlli di banda e latenza ad ogni passo
 search_path(FlowId, RequiredBw, Current, Dst, Visited, Path, CurrLatency, MaxLatency) :-
     s_link(Current, Next, Bandwidth, Length),
     \+ member(Next, Visited),
@@ -124,9 +176,11 @@ search_path(FlowId, RequiredBw, Current, Dst, Visited, Path, CurrLatency, MaxLat
 
 % --- UTILS ---
 
+%rende i link bidirezionali
 s_link(X, Y, Bandwidth, Length) :- link(X, Y, Bandwidth, Length).
 s_link(X, Y, Bandwidth, Length) :- link(Y, X, Bandwidth, Length).
 
+% Permette di ottenere il path in entrambe le direzioni (src->dst e dst->src)
 s_path(PathId, SrcHost, DstHost, Nodes) :- 
     path(PathId, SrcHost, DstHost, Nodes).
 s_path(PathId, DstHost, SrcHost, ReversedNodes) :-
@@ -135,5 +189,5 @@ s_path(PathId, DstHost, SrcHost, ReversedNodes) :-
 
 % Verifica se un percorso transita su un determinato link
 path_contains_link(PathId, Node1, Node2) :-
-    s_path(PathId, _, _, Nodes),
+    path(PathId, _, _, Nodes),
     ( append(_, [Node1, Node2 | _], Nodes) ; append(_, [Node2, Node1 | _], Nodes) ).

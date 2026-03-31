@@ -1,26 +1,39 @@
-% flow(FlowId, SourceService, DestinationService, MaxLatency, RateInHz).
-% link(From, To, BandwidthInBps, LengthInMetres).
-% path(PathId,SrcHost, DstHost, [ListOfNodesInPath]).
+% ==========================================
+% KNOWLEDGE BASE: NETWORK TOPOLOGY
+% ==========================================
 
-% Constants
-speedOfLight(300000000).  % in metres per second
-pcktSize(1500). % in bits, assuming 1500 bytes packet size 
+% --- COSTANTI GLOBALI ---
+speedOfLight(300000).  % in km/s
+pcktSize(1500).        % in bit (dimensione del pacchetto)
 
-% Topology
-host(h1, [s1]).
-host(h2, [s2]).
-router(r1, 1).
-router(r2, 10).
+% --- POSIZIONAMENTO SERVIZI ---
+host(h1, [s1, s3]). 
+host(h2, [s2, s4]). 
 
-link(h1, r1, 1500, 10).
-link(r1, r2, 1500, 10).
-link(r2, h2, 1500, 10).
+% --- ROUTER E QTIME ---
+router(r1, 2). 
+router(r2, 2). 
 
+% --- TOPOLOGIA FISICA (Link) ---
+% link(NodoA, NodoB, BandaTotaleInBps, LunghezzaInKm).
 
-% Flows and predefined paths
-path(p1, h1, h2, [h1, r1, r2, h2]).
+% Accesso
+link(h1, r1, 10000, 5).
+link(r1, r2, 10000, 5).
+link(r2, h2, 5000, 5). 
+link(r1, h2, 5000, 20).
 
-flow(f1, s1, s2, 15, 1).
-flow(f2, s1, s2, 15, 1).
+% --- PERCORSI PREDEFINITI ---
+% path(PathId, SrcHost, DstHost, [ListOfNodes]).
+path(p1, h1, h2, [h1, r1, r2, h2]).       % Percorso sul ramo superiore
+path(p2, h1, h2, [h1, r1, r2, h2]).   % Percorso sul ramo inferiore
 
-routing(f1, p1).
+% --- FLOWS ---
+% flow(FlowId, SrcSvc, DstSvc, MaxLatency, RateInHz).
+flow(f1, s1, s2, 100, 2). 
+flow(f2, s3, s4, 150, 3). 
+
+% --- OLD ROUTING ---
+% routing(FlowId, PathId).
+routing(f1, p1). % f1 è instradato su p1
+routing(f2, p2). % f2 è instradato su p2
