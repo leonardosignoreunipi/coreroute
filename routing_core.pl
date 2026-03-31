@@ -4,7 +4,8 @@
     search_path/8, 
     path_latency/3, 
     partition/2, 
-    crRouting/3 
+    crRouting/3,
+    fast_reroute/3
 ]).
 
 :- consult('network_topology.pl').
@@ -13,6 +14,51 @@
 :- dynamic path/4. 
 
 % --- CORE LOGIC ---
+
+fast_reroute(FlowId, PathId, NewPath) :-
+    still_valid_path(FlowId, PathId, ValidNodes),
+    path(PathId, _, _, Nodes),
+    last(Nodes, Dst),
+    last(ValidNodes, Current),
+    flow(FlowId, _, _, MaxLatency, RateInHz),
+
+    pcktSize(PcktSize),
+    RequiredBw is RateInHz * PcktSize,
+
+    reverse(ValidNodes, ReversedValidNodes),
+
+    search_path(FlowId, RequiredBw, Current, Dst, ReversedValidNodes, NewPath, 0, MaxLatency).
+
+still_valid_path(FlowId, PathId, ValidNodes) :-
+    routing(FlowId, PathId),
+    flow(FlowId, _, _, MaxLatency, RateInHz),
+
+    pcktSize(PcktSize),
+    RequiredBw is RateInHz * PcktSize,
+
+    path(PathId, _, _, Nodes), 
+    build_valid_nodes_list(Nodes, FlowId, ValidNodes, RequiredBw, MaxLatency, 0).
+
+build_valid_nodes_list([LastNode],_, LastNode, _, _, _).
+build_valid_nodes_list([Node1, Node2 | Rest],FlowId, ValidNodes, RequireBw, MaxLatency, AccLatency) :-
+    s_link(Node1, Node2, Bandwidth, Length),
+    available_bandwidth(FlowId, Node1, Node2, Bandwidth, EffectiveBw),
+    
+
+    pcktSize(PcktSize),
+
+    node_qtime(Node1, QTime1),
+    speedOfLight(SpeedOfLight),
+    Dtrasm is PcktSize / EffectiveBw,
+    Dprop is Length / SpeedOfLight,
+    NewAccLatency is AccLatency + Dtrasm + Dprop + QTime1,
+
+    ((NewAccLatency =< MaxLatency, EffectiveBw >= RequireBw) ->
+        ValidNodes = [Node1 | RestValidNodes],
+        build_valid_nodes_list([Node2 | Rest], FlowId, RestValidNodes, RequireBw, MaxLatency, NewAccLatency)
+        ;
+        ValidNodes = [Node1]
+    ).
 
 %% partition(AllFlows, OkFlows, KoFlows) :- findall(r(F,R), rOk(F,R), OkFlows), subtract(AllFlows, OkFlows, KoFlows).
 % Divide i routing in validi e non validi
@@ -68,14 +114,14 @@ is_routing_valid(FlowId, PathId) :-
     routing(FlowId, PathId),
     flow(FlowId, SrcService, DstService, MaxLatency, RateInHz),
     s_path(PathId, SrcHost, DstHost, Nodes),
-    Nodes = [SrcHost|_], % Verifica che il primo nodo sia la sorgente
+    Nodes = [SrcHost|_],
     last(Nodes, DstHost),
     host(SrcHost, ServicesAtSrcHost), member(SrcService, ServicesAtSrcHost),
     host(DstHost, ServicesAtDstHost), member(DstService, ServicesAtDstHost),
 
     % 1. CONTROLLO BANDA: Verifica che ogni link del path abbia banda sufficiente
     pcktSize(PcktSize),
-    RequiredBw is RateInHz * PcktSize, % Calcolo della banda richiesta
+    RequiredBw is RateInHz * PcktSize,
     check_path_bandwidth(FlowId, Nodes, RequiredBw),
 
     % 2. CONTROLLO LATENZA: Verifica che la latenza totale del path sia inferiore al massimo consentito
