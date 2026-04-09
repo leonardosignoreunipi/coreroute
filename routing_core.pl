@@ -1,20 +1,13 @@
-:- module(routing_core, [
-    is_routing_valid/2,
-    find_valid_paths/2,
-    search_path/8, 
-    path_latency/3, 
-    partition/2, 
-    crRouting/3,
-    fast_reroute/3
-]).
-
 :- consult('network_topology.pl').
 
 :- dynamic routing/2.
 :- dynamic path/4. 
 
-% --- CORE LOGIC ---
+% -- NODES QTIME --- 
+node_qtime(Node, 0) :- host(Node, _).
+node_qtime(Node, QTime) :- router(Node, QTime).
 
+% --- CORE LOGIC ---
 fast_reroute(FlowId, PathId, NewPath) :-
     still_valid_path(FlowId, PathId, ValidNodes),
     path(PathId, _, _, Nodes),
@@ -27,7 +20,9 @@ fast_reroute(FlowId, PathId, NewPath) :-
 
     reverse(ValidNodes, ReversedValidNodes),
 
-    search_path(FlowId, RequiredBw, Current, Dst, ReversedValidNodes, NewPath, 0, MaxLatency).
+    path_latency_nodes(FlowId, ValidNodes, 0, AccLatency),
+
+    search_path(FlowId, RequiredBw, Current, Dst, ReversedValidNodes, NewPath, AccLatency, MaxLatency).
 
 still_valid_path(FlowId, PathId, ValidNodes) :-
     routing(FlowId, PathId),
@@ -59,21 +54,14 @@ build_valid_nodes_list([Node1, Node2 | Rest],FlowId, ValidNodes, RequireBw, MaxL
         ;
         ValidNodes = [Node1]
     ).
-
-%% partition(AllFlows, OkFlows, KoFlows) :- findall(r(F,R), rOk(F,R), OkFlows), subtract(AllFlows, OkFlows, KoFlows).
-% Divide i routing in validi e non validi
 partition(OkFlows, KoFlows) :-
-    findall(
-        routing(FlowId, PathId),
-        is_routing_valid(FlowId, PathId),
-        OkFlows), 
-    findall(
-        routing(FlowId, PathId),
-        (
-            routing(FlowId, PathId),            
-            \+ is_routing_valid(FlowId, PathId) 
-        ),
-        KoFlows).
+    findall(routing(FId, PId),( flow(FId, _, _, _, _), routing(FId, PId)), AllFlows),
+    partition(AllFlows, OkFlows, KoFlows).
+
+% Divide i routing in validi e non validi
+partition(AllFlows, OkFlows, KoFlows) :-
+    findall(routing(FlowId, PathId), is_routing_valid(FlowId, PathId), OkFlows), 
+    subtract(AllFlows, OkFlows, KoFlows).
 
 
 %% crRouting(+OkFlows, +KoFlows, -NewValidRouting) :- ...
@@ -86,7 +74,7 @@ reallocate_ko_flows([], AccRouting, AccRouting).
 
 reallocate_ko_flows([routing(FlowId, _) | Tail], AccRouting, FinalRouting) :- 
     ( find_valid_paths(FlowId, Path) ->
-
+        %then
         gensym(new_p, NewPathId),
 
         Path = [SrcHost|_], last(Path, DstHost),
@@ -96,8 +84,8 @@ reallocate_ko_flows([routing(FlowId, _) | Tail], AccRouting, FinalRouting) :-
         assertz(routing(FlowId, NewPathId)), 
         
         reallocate_ko_flows(Tail, [routing(FlowId, NewPathId) | AccRouting], FinalRouting)
-    ;
-        
+    ; 
+        %else TODO: CORREGGERE    
         reallocate_ko_flows(Tail, AccRouting, FinalRouting)
     ).
 
@@ -148,7 +136,7 @@ available_bandwidth(CurrentFlowId, Node1, Node2, TotalBw, EffectiveBw) :-
     findall(Bw,
         (
             routing(OtherFlowId, PathId),      
-            OtherFlowId \= CurrentFlowId, %tutti tranne questo flusso     
+            dif(OtherFlowId, CurrentFlowId), %tutti tranne questo flusso     
             path_contains_link(PathId, Node1, Node2), 
             flow(OtherFlowId, _, _, _, RateInHz),
             
@@ -157,7 +145,7 @@ available_bandwidth(CurrentFlowId, Node1, Node2, TotalBw, EffectiveBw) :-
         ),
         UsedBwList),                           
     sum_list(UsedBwList, UsedBw),              
-    EffectiveBw is TotalBw - UsedBw.           
+    EffectiveBw is TotalBw - UsedBw.%free bandwith, si può fare meglio            
 
 %% check_path_bandwidth(+FlowId, +NodesList, +RequiredBw)
 % Scansiona la lista dei nodi e verifica che ogni link abbia banda residua >= RequiredBw
@@ -191,21 +179,15 @@ path_latency_nodes(FlowId, [Node1, Node2 | Rest], Acc, Latency) :-
     path_latency_nodes(FlowId, [Node2 | Rest], NewAcc, Latency).
 path_latency_nodes(FlowId, [_], Acc, Acc).
 
-node_qtime(Node, 0) :- host(Node, _).
-node_qtime(Node, QTime) :- router(Node, QTime).
-
 % --- PATHFINDING ---
 search_path(_, _, Dst, Dst, Visited, Path, _, _) :- 
     reverse(Visited, Path).
 
 % Ricerca ricorsiva di un percorso che soddisfi i QoS effettua i controlli di banda e latenza ad ogni passo
 search_path(FlowId, RequiredBw, Current, Dst, Visited, Path, CurrLatency, MaxLatency) :-
-    s_link(Current, Next, Bandwidth, Length),
-    \+ member(Next, Visited),
-
-    % Calcola la nuova latenza accumulata
-    speedOfLight(SpeedOfLight),
-    pcktSize(PcktSize),
+    s_link(Current, Next, Bandwidth, Length),\+ member(Next, Visited),
+    
+    speedOfLight(SpeedOfLight),pcktSize(PcktSize),
 
     available_bandwidth(FlowId, Current, Next, Bandwidth, EffectiveBw),
     EffectiveBw >= RequiredBw,
@@ -215,7 +197,6 @@ search_path(FlowId, RequiredBw, Current, Dst, Visited, Path, CurrLatency, MaxLat
     Dprop is Length / SpeedOfLight,
     NewLatency is CurrLatency + Dtrasm + Dprop + QTime1,
 
-    % Verifica che la latenza non superi il limite
     NewLatency =< MaxLatency,
 
     search_path(FlowId, RequiredBw, Next, Dst, [Next|Visited], Path, NewLatency, MaxLatency).
