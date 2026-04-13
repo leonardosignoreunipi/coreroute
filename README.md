@@ -1,28 +1,115 @@
-# Routing Adattivo in Reti Cloud-Edge SDN tramite Continuous Reasoning
+# 🌐 Hybrid SDN Controller (Python + Prolog)
 
-Il presente repository contiene il prototipo logico-dichiarativo, sviluppato in ambiente SWI-Prolog, per la validazione e il calcolo del routing *QoS-aware* all'interno di architetture Software-Defined Networking (SDN) nel continuum Cloud-Edge.
+Questo progetto implementa un **controller Software Defined Networking (SDN) ibrido** progettato per il *Traffic Engineering*.  
+L’architettura combina la potenza dell’elaborazione di grafi in Python con la capacità di inferenza logica di SWI-Prolog, creando un sistema intelligente e adattivo.
 
-Il progetto estende e adatta i concetti di **Continuous Reasoning** introdotti nella metodologia EDGEWISECR, traslandoli dal dominio del *service placement* a quello del *traffic engineering* e dell'orchestrazione dei flussi di rete. L'obiettivo primario è minimizzare i ricalcoli onerosi dell'intera matrice di routing, valutando dinamicamente la validità delle allocazioni correnti a fronte di mutamenti topologici o variazioni dei requisiti applicativi.
+L’obiettivo è **allocare dinamicamente i flussi di rete** rispettando vincoli stringenti — come banda, latenza e policy di servizio — e gestire la congestione attraverso tecniche di *Incremental Rerouting* e *Quality of Service (QoS)*.
 
-## Struttura del Progetto
+---
 
-Il prototipo è ingegnerizzato separando la *Knowledge Base* estensionale (lo stato della rete) dal motore inferenziale (le regole di validazione e ricerca).
+## 🏗️ Architettura Ibrida
 
-* `network_topology.pl`: Costituisce lo stato corrente dell'infrastruttura. Raccoglie i fatti che descrivono i nodi (host e router), le capacità dei link (banda disponibile e latenza misurata) e le caratteristiche dei flussi di dati (servizi sorgente/destinazione, latenza massima tollerata e rate di pacchetti generati). In un'architettura di produzione, questo file funge da interfaccia dinamica, generato e aggiornato in tempo reale dal Controller SDN (es. tramite script Python associati a framework come Ryu o ONOS).
-* `routing_core.pl`: È il modulo core del sistema. Implementa la logica per la validazione formale dei percorsi, il calcolo della banda residua effettiva, la stima del ritardo di trasmissione contestuale al livello di congestione e gli algoritmi di ricerca per l'individuazione di percorsi alternativi aciclici.
+Il sistema è strutturato in due componenti principali, ciascuno con responsabilità ben definite, che comunicano tramite la libreria **Janus-SWI**.
 
-## Modello Teorico e Vincoli QoS
+### 🧠 Cervello Procedurale (Python + NetworkX)
+Gestisce lo stato della rete e il calcolo dei percorsi:
+- Costruzione del grafo della rete
+- Calcolo dei percorsi alternativi in caso di guasti o congestione
+- Ordinamento dei flussi secondo priorità QoS
+- Esplorazione delle alternative tramite **Min-Heap**
 
-Il calcolo della Quality of Service (QoS) si basa sui seguenti principi:
+### ⚖️ Cervello Logico (Prolog)
+Agisce come *Policy Engine*:
+- Valuta lo stato globale della rete (*partition*)
+- Approva o rifiuta le proposte di routing
+- Applica vincoli rigorosi su:
+  - Capacità residua dei link
+  - Tempi di accodamento (*qtime*)
+  - Coerenza globale della rete
 
-1. **Banda Effettiva**: La larghezza di banda richiesta da un flusso è calcolata dinamicamente come prodotto tra il rate di emissione (Hz) e la dimensione del pacchetto (costante globale in bit). Il routing fallisce proattivamente qualora un link non disponga di banda residua sufficiente, calcolata sottraendo la banda allocata agli altri flussi concorrenti instradati sul medesimo segmento.
-2. **Latenza Dinamica**: Il ritardo cumulativo di un percorso include il tempo di accodamento specifico per ogni nodo (QTime), il ritardo di propagazione fisico e un ritardo di trasmissione dipendente dallo stato di congestione, calcolato in funzione della banda residua effettiva del link.
+---
 
-## Prerequisiti e Avvio
+## ✨ Funzionalità Principali
 
-L'ambiente richiede l'installazione di **SWI-Prolog**. 
-Per eseguire il prototipo in locale, avviare l'interprete Prolog e caricare il modulo principale:
+### 🔄 Riallocazione Adattiva (Min-Heap Rerouting)
+Quando un flusso fallisce, il sistema seleziona il percorso alternativo con la minima deviazione rispetto all’originale, grazie a una struttura **Min-Heap**.
 
-```prolog
-?- consult('routing_core.pl').
+### ⚡ QoS e Priority Queue (“Elephants and Mice”)
+I flussi vengono ordinati automaticamente dal più leggero al più pesante:
+- Evita starvation
+- Migliora l’efficienza globale
+- Favorisce il completamento rapido dei flussi piccoli
 
+### 🧹 Prevenzione dello “Stato Fantasma”
+I flussi non instradabili vengono rimossi dalla Knowledge Base Prolog:
+- Libera immediatamente risorse logiche
+- Mantiene la consistenza del sistema
+
+### 📊 Vincoli Multipli
+Il controller valuta simultaneamente:
+- **Banda disponibile** (considerando solo traffico concorrente reale)
+- **Latenza del percorso**, includendo:
+  - Velocità di propagazione
+  - Dimensione dei pacchetti
+  - Tempi di accodamento
+
+---
+
+## 📂 Struttura del Repository# 🌐 Hybrid SDN Controller (Python + Prolog)
+
+Questo progetto implementa un **controller Software Defined Networking (SDN) ibrido** progettato per il *Traffic Engineering*.  
+L’architettura combina la potenza dell’elaborazione di grafi in Python con la capacità di inferenza logica di SWI-Prolog, creando un sistema intelligente e adattivo.
+
+L’obiettivo è **allocare dinamicamente i flussi di rete** rispettando vincoli stringenti — come banda, latenza e policy di servizio — e gestire la congestione attraverso tecniche di *Incremental Rerouting* e *Quality of Service (QoS)*.
+
+---
+
+## 🏗️ Architettura Ibrida
+
+Il sistema è strutturato in due componenti principali, ciascuno con responsabilità ben definite, che comunicano tramite la libreria **Janus-SWI**.
+
+### 🧠 Cervello Procedurale (Python + NetworkX)
+Gestisce lo stato della rete e il calcolo dei percorsi:
+- Costruzione del grafo della rete
+- Calcolo dei percorsi alternativi in caso di guasti o congestione
+- Ordinamento dei flussi secondo priorità QoS
+- Esplorazione delle alternative tramite **Min-Heap**
+
+### ⚖️ Cervello Logico (Prolog)
+Agisce come *Policy Engine*:
+- Valuta lo stato globale della rete (*partition*)
+- Approva o rifiuta le proposte di routing
+- Applica vincoli rigorosi su:
+  - Capacità residua dei link
+  - Tempi di accodamento (*qtime*)
+  - Coerenza globale della rete
+
+---
+
+## ✨ Funzionalità Principali
+
+### 🔄 Riallocazione Adattiva (Min-Heap Rerouting)
+Quando un flusso fallisce, il sistema seleziona il percorso alternativo con la minima deviazione rispetto all’originale, grazie a una struttura **Min-Heap**.
+
+### ⚡ QoS e Priority Queue (“Elephants and Mice”)
+I flussi vengono ordinati automaticamente dal più leggero al più pesante:
+- Evita starvation
+- Migliora l’efficienza globale
+- Favorisce il completamento rapido dei flussi piccoli
+
+### 🧹 Prevenzione dello “Stato Fantasma”
+I flussi non instradabili vengono rimossi dalla Knowledge Base Prolog:
+- Libera immediatamente risorse logiche
+- Mantiene la consistenza del sistema
+
+### 📊 Vincoli Multipli
+Il controller valuta simultaneamente:
+- **Banda disponibile** (considerando solo traffico concorrente reale)
+- **Latenza del percorso**, includendo:
+  - Velocità di propagazione
+  - Dimensione dei pacchetti
+  - Tempi di accodamento
+
+---
+
+## 📂 Struttura del Repository
