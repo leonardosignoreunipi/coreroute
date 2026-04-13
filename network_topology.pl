@@ -6,6 +6,7 @@
 :- dynamic link/4.
 :- dynamic path/4.
 :- dynamic flow/5.
+:- dynamic routing/2.
 
 % --- COSTANTI GLOBALI ---
 speedOfLight(300000).
