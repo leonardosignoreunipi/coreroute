@@ -1,20 +1,22 @@
 import networkx as nx
 import janus_swi as janus
 import matplotlib.pyplot as plt
+import heapq
 
 ### --- Constants --- ###
 SPEED_OF_LIGHT = 300000 
 PCKT_SIZE = 256
 
 ### --- Network Topology --- ###
+
 flows = [
-            ("f1", "s1", "s3", 17, 1), 
-            ("f2", "s2", "s4", 17, 3)
+            ("f1", "s1", "s3", 7, 2), 
+            ("f2", "s2", "s4", 7, 3)
         ]
 
 links = [
-            ("h1", "r1", 1024, 10),
-            ("r1", "r2", 1024, 10),
+            ("h1", "r1", 2048, 10),
+            ("r1", "r2", 2048, 10),
             ("r2", "h2", 1024, 10),
             ("r1", "r3", 1024, 10),
             ("r3", "h2", 1024, 10)
@@ -116,6 +118,30 @@ def print_prolog_facts():
         
     print("=======================================\n")
 
+def get_path_edges(path):
+    return set(frozenset([u, v]) for u, v in zip(path[:-1], path[1:]))
+
+def diff_score(oldPath, newPath):
+    old_edges = get_path_edges(oldPath)
+    new_edges = get_path_edges(newPath)
+    return len(new_edges - old_edges)
+
+def build_heap (G, flowId, paths):
+    flowHeap = []
+        
+    FlowId = flowId
+    pathId = paths[FlowId][0]
+        
+    src = paths[FlowId][1][0]
+    dst = paths[FlowId][1][-1]
+        
+    all_paths = list(nx.all_simple_paths(G, source=src, target=dst))
+    for alt_path in all_paths:
+        diffScore = diff_score(paths[FlowId][1], alt_path)
+        heapq.heappush(flowHeap, (diffScore, alt_path))
+    heap = flowHeap
+    return heap
+    
 
 def partition():
     query = """
@@ -126,12 +152,29 @@ def partition():
     result = janus.query_once(query)
     return result["OkFlows"], result["KoFlows"]
 
-def isValidRouting(flowId, pathId):
+def deleteKoFlows(KoFlows):
+    for routing in KoFlows:
+        janus.query_once("retract(routing(FlowId, _))", {"FlowId": routing["flow"]})
+
+def reallocateFlow(flowId, pathNodes):
+    temp_path_id = f"temp_{flowId}"
+    src = pathNodes[0]
+    dst = pathNodes[-1]
+    
+    janus.query_once("assertz(path(PathId, Src, Dst, Nodes))", {"PathId": temp_path_id, "Src": src, "Dst": dst, "Nodes": pathNodes})
+    
+    janus.query_once("assertz(routing(FlowId, PathId))", {"FlowId": flowId, "PathId": temp_path_id})
+    
     query = """
         partition(_OkFlowsTemp, _KoFlowsTemp),
-        is_routing_valid(FlowId, PathId, _OkFlowsTemp).
+        member(routing(FlowId, PathId), _OkFlowsTemp).
     """
-    result = janus.query_once(query, {"FlowId": flowId, "PathId": pathId})
+    result = janus.query_once(query, {"FlowId": flowId, "PathId": temp_path_id})
+    
+    if result["truth"] == False:
+        janus.query_once("retract(routing(FlowId, _))", {"FlowId": flowId})
+        janus.query_once("retract(path(PathId, _, _, _))", {"PathId": temp_path_id})
+    
     return result["truth"]
 
 def crRouting():
@@ -146,28 +189,53 @@ def crRouting():
 def __main__():
     G = nx.Graph()
     
-    print("Building graph...")
+    #print("Building graph...")
     G = build_graph(G, hosts, routers, links)
     
-    print("\nKB:", )
+    #print("\nKB:", )
     
-    print("\nInitialize graph paths...")
-    paths = inizialize_path_graph(G, flows)
-    print("\nInitial paths:", paths)
+    #print("\nInitialize graph paths...")
+    paths = inizialize_path_graph(G, flows) #paths = {flowId: (pathId, path)}
+    #print("\nInitial paths:", paths)
     
-    print("\nInitialize Janus KB...")
+    #print("\nInitialize Janus KB...")
     inizialize_janus_kb(G, paths)
-    print("\nKB initialized with hosts, routers, links, and flows.")
+    #print("\nKB initialized with hosts, routers, links, and flows.")
     
     okflows, koflows = partition()
     
-    print("\nValid routings (OkFlows):", okflows)
-    print("\nInvalid routings (KoFlows):", koflows)
+    print("\nOkFlows:", okflows)
+    print("\nKoFlows:", koflows)
     
+    deleteKoFlows(koflows)
+    
+    flow_rates = {f[0]: f[4] for f in flows}
+    koflows.sort(key=lambda routing: flow_rates[routing["flow"]])
+    
+    while len(koflows) > 0:
+        
+        routing = koflows.pop(0)
+        flowId = routing["flow"]
+        
+        heap = build_heap(G, flowId, paths)
+        if len(heap) == 0:
+            print(f"No paths for flow {flowId}.") 
+            continue
+        
+        next_path = heapq.heappop(heap)[1]
+        
+        while (reallocateFlow(flowId, next_path) == False):
+            if len(heap) == 0:
+                print(f"No valid alternative paths left for flow {flowId}.")
+                break
+            next_path = heapq.heappop(heap)[1]
+        if next_path is None:
+            print(f"No valid alternative path found for flow {flowId}.")
+            continue
+        
+    print("\nFinal routing after reallocation:")
     print_prolog_facts()
-    
-    print("\nIsRoutingValid(f1,p1)", isValidRouting("f1", "p1"))
-    print("crRouting", crRouting())
+    okflows, koflows = partition()
    
     
 if __name__ == "__main__":
