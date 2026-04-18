@@ -10,7 +10,7 @@
 
 % --- COSTANTI GLOBALI ---
 speedOfLight(300000).
-pcktSize(256).        
+pcktSize(_,256).        
 
 host(h1, ['s1', 's2']).
 host(h2, ['s3', 's4']).
