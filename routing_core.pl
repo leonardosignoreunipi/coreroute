@@ -8,12 +8,14 @@ partition(OkFlows, KoFlows) :-
     partition(AllFlows, OkFlows, KoFlows).
 
 partition(AllFlows, OkFlows, KoFlows) :-
-    findall(routing(FlowId, PathId), validPath(FlowId, PathId, AllFlows), OkFlows), 
+    findall(routing(FlowId, PathId), (routing(FlowId,PathId),validPath(FlowId, PathId, AllFlows)), OkFlows), 
     subtract(AllFlows, OkFlows, KoFlows).
 
 crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings) :-
     reRoute(FlowId, OldRoutings, NewValidPathId), 
     crRouting(Tail, [routing(FlowId, NewValidPathId)|OldRoutings], NewRoutings).
+ crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings) :-
+     crRouting(Tail, [routing(FlowId, PathId)|OldRoutings], NewRoutings).
 crRouting([], NewValidRoutings, NewValidRoutings) :- !.
 
 reRoute(FlowId, Routings, NextPathId) :-
@@ -32,7 +34,7 @@ validPath(FlowId, PathId, OkRoutings) :-
     host(DstHost, ServicesAtDstHost), member(DstService, ServicesAtDstHost),
 
     requiredBandwidth(FlowId, UsedBw), checkBandwidthPath(FlowId, Nodes, UsedBw, OkRoutings),
-    chekLatencyPath(FlowId, PathId, OkRoutings, Latency), MaxLatency >= Latency.
+    checkLatencyPath(FlowId, PathId, OkRoutings, Latency), MaxLatency >= Latency.
 
 requiredBandwidth(FlowId, UsedBw) :-
     pcktSize(FlowId, PcktSize),
@@ -58,7 +60,7 @@ checkBandwidthPath(FlowId, [Node1, Node2 | Rest], RequiredBandwidth, OkRoutings)
     checkBandwidthPath(FlowId, [Node2 | Rest], RequiredBandwidth, OkRoutings).
 checkBandwidthPath(_, [_], _, _).
 
-chekLatencyPath(FlowId, PathId, OkRoutings, Latency) :-
+checkLatencyPath(FlowId, PathId, OkRoutings, Latency) :-
     path(PathId, _, _, Nodes),
     path_latency_nodes(FlowId, Nodes, OkRoutings, 0, Latency).
 
