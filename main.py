@@ -2,8 +2,9 @@ import networkx as nx
 import janus_swi as janus
 import matplotlib.pyplot as plt
 import heapq
+import time
 
-### --- Constants --- ### NON VENGONO USATE
+### --- Constants ---
 SPEED_OF_LIGHT = 300000 
 PCKT_SIZE = 256
 
@@ -73,13 +74,18 @@ def inizialize_janus_kb(graph, paths):
     
     janus.consult('routing_core.pl')
     
+    janus.query_once("retractall(pcktSize(_, _))")
+    janus.query_once("retractall(speedOfLight(_))")
     janus.query_once("retractall(host(_, _))")
     janus.query_once("retractall(router(_, _))")
     janus.query_once("retractall(link(_, _, _, _))")
     janus.query_once("retractall(flow(_, _, _, _, _))")
     janus.query_once("retractall(routing(_, _))")
     janus.query_once("retractall(path(_, _, _, _))")
+    janus.query_once("retractall(pathsCandidates(_, _))")
     
+    janus.query_once("assertz(pcktSize(_,PcktSize))", {"PcktSize": PCKT_SIZE})
+    janus.query_once("assertz(speedOfLight(SpeedOfLight))", {"SpeedOfLight": SPEED_OF_LIGHT})
     for hostId, services in hosts:
         janus.query_once("assertz(host(HostId, Services))", {"HostId": hostId, "Services": services})
     for routerId, qtime in routers:
@@ -95,27 +101,30 @@ def inizialize_janus_kb(graph, paths):
 def print_prolog_facts():
     print("\n=== STATO ATTUALE DEI DATI IN PROLOG ===")
     
-    print("\n--- HOSTS ---")
+    for d in  janus.query("speedOfLight(SpeedOfLight)"):
+        print(f"speedOfLight({d['SpeedOfLight']}).")
+    
+    for d in janus.query("pcktSize(_, PacktSize)"):
+        print(f"pcktSize(_, {d['PacktSize']}).")
+        
     for d in janus.query("host(Id, Services)"):
         print(f"host({d['Id']}, {d['Services']}).")
         
-    print("\n--- ROUTERS ---")
     for d in janus.query("router(Id, QTime)"):
         print(f"router({d['Id']}, {d['QTime']}).")
         
-    print("\n--- LINKS ---")
     for d in janus.query("link(Src, Dst, Bw, Length)"):
         print(f"link({d['Src']}, {d['Dst']}, {d['Bw']}, {d['Length']}).")
         
-    print("\n--- FLOWS ---")
     for d in janus.query("flow(Id, SrcSvc, DstSvc, MaxLat, Rate)"):
         print(f"flow({d['Id']}, {d['SrcSvc']}, {d['DstSvc']}, {d['MaxLat']}, {d['Rate']}).")
-        
-    print("\n--- PATHS ---")
+    
     for d in janus.query("path(Id, Src, Dst, Nodes)"):
         print(f"path({d['Id']}, {d['Src']}, {d['Dst']}, {d['Nodes']}).")
+    
+    for d in janus.query("pathsCandidates(FlowId, Paths)"):
+        print(f"pathsCandidates({d['FlowId']}, {d['Paths']}).")
         
-    print("\n--- ROUTING ATTUALI ---")
     for d in janus.query("routing(FlowId, PathId)"):
         print(f"routing({d['FlowId']}, {d['PathId']}).")
         
@@ -143,7 +152,7 @@ def build_heap(G, flowId, old_path):
     src = old_path[0]
     dst = old_path[-1]
         
-    all_paths = list(nx.all_simple_paths(G, source=src, target=dst))
+    all_paths = list(nx.all_simple_paths(G, source=src, target=dst))# :(
     for newPath in all_paths:
         diffScore = diff_score(old_path, newPath)
         heapq.heappush(flowHeap, (diffScore, newPath))
@@ -159,77 +168,56 @@ def partition():
     result = janus.query_once(query)
     return result["OkFlows"], result["KoFlows"]
 
-def deleteKoFlows(KoFlows):
-    for routing in KoFlows:
-        janus.query_once("retract(routing(FlowId, _))", {"FlowId": routing["flow"]})
-
-def is_valid_path(flowId, pathNodes):
-    new_path_id = f"new_{flowId}"
-    src = pathNodes[0]
-    dst = pathNodes[-1]
+def crRoutingWithHeap(G, paths, okflows, koflows):
     
-    janus.query_once("assertz(path(PathId, Src, Dst, Nodes))", {"PathId": new_path_id, "Src": src, "Dst": dst, "Nodes": pathNodes})
-    
-    janus.query_once("assertz(routing(FlowId, PathId))", {"FlowId": flowId, "PathId": new_path_id})
-    
-    query = """
-        partition(_OkFlowsTemp, _KoFlowsTemp),
-        member(routing(FlowId, PathId), _OkFlowsTemp).
-    """
-    result = janus.query_once(query, {"FlowId": flowId, "PathId": new_path_id})
-    
-    if result["truth"] == False:
-        janus.query_once("retract(routing(FlowId, _))", {"FlowId": flowId})
-        janus.query_once("retract(path(PathId, _, _, _))", {"PathId": new_path_id})
-    
-    return result["truth"]
-
-def crRouting():
-    query = """
-        partition(_OkFlowsTemp, _KoFlowsTemp),
-        crRouting(_OkFlowsTemp, _KoFlowsTemp, _NewRoutingTemp),
-        findall(_{flow: _F, pathId: _P}, member(routing(_F, _P), _NewRoutingTemp), NewValidRouting).
-    """
-    result = janus.query_once(query)
-    return result["NewValidRouting"]
-
-def crRoutingWithHeap(G, paths, koflows):
-    deleteKoFlows(koflows)
-    
-    flow_rates = {f[0]: f[4] for f in flows}
-    koflows.sort(key=lambda routing: flow_rates[routing["flow"]])
-    
-    invalidRoutings = []
-    
-    while len(koflows) > 0:
-        
-        routing = koflows.pop(0)
+    flow_rates = {f[0]: f[4] for f in flows} #sort flows by decreasing packet rate
+    koflows.sort(key=lambda routing: flow_rates[routing["flow"]], reverse=True)
+    temp_koflows = list(koflows)
+    while len(temp_koflows) > 0:
+        routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
         flowId = routing["flow"]
         old_path_nodes = paths[flowId][1]
+        requiredBandwidth = flow_rates[flowId] * PCKT_SIZE
         
-        heap = build_heap(G, flowId, old_path_nodes)
-        if len(heap) == 0:
-            print(f"No paths for flow {flowId}.") 
-            continue
+        Gpruned = pruningPerBandwith(G,requiredBandwidth)
         
-        if len(heap) == 0:
-            print(f"Not existing path for flow {flowId}.")
-            continue
-        
-        next_path = heapq.heappop(heap)[1]
-        
-        while (is_valid_path(flowId, next_path) == False):
-            if len(heap) == 0:
-                next_path = None
-                break
-            next_path = heapq.heappop(heap)[1]
-        if next_path is None:
-            invalidRoutings.append(routing)
-            print(f"No valid alternative path found for flow {flowId}.")
-            continue
-    for routing in invalidRoutings:
-        janus.query_once("assertz(routing(FlowId, PathId))", {"FlowId": routing["flow"], "PathId": routing["path"]}) ### insert old path for invalid routings
+        heap = build_heap(Gpruned, flowId, old_path_nodes)
+        pathsIds = []
+        for index, (_, pathNodes) in enumerate(heap):
+            pathId = f"{flowId}_{index + 1}"
+            pathsIds.append(pathId)
+            janus.query_once("assertz(path(PathId, Src, Dst, Path))", {"PathId": pathId, "Src": pathNodes[0], "Dst": pathNodes[-1], "Path": pathNodes})
+        janus.query_once("assertz(pathsCandidates(FlowId, PathIds))", {"FlowId": flowId, "PathIds": pathsIds})
     
+    ko_terms = [f"routing({r['flow']}, {r['path']})" for r in koflows]
+    ok_terms = [f"routing({r['flow']}, {r['path']})" for r in okflows]
+
+    ko_list = f"[{', '.join(ko_terms)}]"
+    ok_list = f"[{', '.join(ok_terms)}]"
+    query = f"""
+        crRouting({ko_list}, {ok_list}, _NewValidRoutingsTemp),
+        findall(_{{flowId: _F, pathId: _P}}, member(routing(_F,_P), _NewValidRoutingsTemp), NewValidRoutings).
+    """
+    try:
+        result = janus.query_once(query)
+        if result['NewValidRoutings']: 
+            return result["NewValidRoutings"]
+        else: return []
+    except Exception as e:
+        print(f"❌ Errore critico nel ricalcolo: {e}")
+        return []
+
+def updateRoutings(newValidRoutings):
+    janus.query_once("retractall(routing(_, _))")
+    for r in newValidRoutings:
+                janus.query_once("assertz(routing(FlowId, PathId))", {"FlowId":r['flowId'], "PathId":r['pathId']})
+
+def pruningPerBandwith(G, requireBandwidth):
+    def filter_edge(u, v):
+        return G[u][v]['bw'] >= requireBandwidth
+    
+    Gpruned = nx.subgraph_view(G, filter_edge=filter_edge)
+    return Gpruned
 
 def __main__():
     
@@ -237,16 +225,19 @@ def __main__():
     
     G = build_graph(G, hosts, routers, links)
     
-    paths = find_paths(G, flows) #paths = {flowId: (pathId, path)}
+    oldRouting = find_paths(G, flows) #paths = {flowId: (pathId, path)}
     
-    inizialize_janus_kb(G, paths)
+    inizialize_janus_kb(G, oldRouting)
     
+    startTime = time.time()
     okflows, koflows = partition()
-    print(f"\n\nOkFlows:{okflows}\n\nKoFlows:{koflows}\n")
     
-    crRoutingWithHeap(G, paths, koflows)
+    newValidRoutings = crRoutingWithHeap(G, oldRouting, okflows, koflows)
+    endTime = time.time()
     
-    print_routings()
+    updateRoutings(newValidRoutings)
+    print(f"\ntime: {endTime - startTime}")
+    print(f"\nNewValidRoutings:{newValidRoutings}")
    
     
 if __name__ == "__main__":
