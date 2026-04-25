@@ -44,12 +44,11 @@ routings = [
     ("f2", "old_path")
 ]
 
-def build_graph(graph, hosts, routers, links):
-    assert graph is not None
+def build_graph(hosts, routers, links):
     assert len(hosts) > 0
     assert len(routers) > 0 
     assert len(links) > 0
-    
+    graph = nx.Graph()
     for hostId, services in hosts:
         graph.add_node(hostId, type="Host", services=services)
     for routerId, qtime in routers:
@@ -255,7 +254,7 @@ def crRouting(G, flowNodes, okflows, koflows):
             return result["NewValidRoutings"]
         else: return []
     except Exception as e:
-        print(f"❌ Errore critico nel ricalcolo: {e}")
+        print(f"Errore critico nel ricalcolo: {e}")
         return []
 
 def update_janus_kb(newValidRoutings):
@@ -272,9 +271,7 @@ def pruningPerBandwith(G, requireBandwidth):
 
 def __main__():
     
-    G = nx.Graph()
-    
-    G = build_graph(G, hosts, routers, links)
+    G = build_graph(hosts, routers, links)
     
     inizialize_janus_kb(G)
     
