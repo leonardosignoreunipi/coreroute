@@ -1,4 +1,12 @@
-:- consult('network_topology.pl').
+:- dynamic host/2.
+:- dynamic router/2.
+:- dynamic link/4.
+:- dynamic path/4.
+:- dynamic flow/5.
+:- dynamic routing/2.
+:- dynamic pathsCandidates/2.
+:- dynamic speedOfLight/1.
+:- dynamic pcktSize/2.
 
 node_qtime(Node, 0) :- host(Node, _).
 node_qtime(Node, QTime) :- router(Node, QTime).

@@ -58,25 +58,9 @@ def build_graph(hosts, routers, links):
         
     return graph
 
-def find_paths(graph, flows):
-    assert graph is not None
-    assert len(flows) > 0
-    
-    paths = {}
-    
-    for index, (flowId, SrcService, DstService, _, _) in enumerate(flows):
-        
-        src = next((hostId for hostId, services in hosts if SrcService in services), None)
-        dst = next((hostId for hostId, services in hosts if DstService in services), None)
-        
-        if src and dst: 
-           paths[flowId] = (f"old_p{index + 1}", nx.shortest_path(graph, source=src, target=dst, weight='length'))
-        else: print(f"Error: Source or destination service not found for flow {flowId}")
-    return paths
-
-def inizialize_janus_kb(graph):
-    assert graph is not None
+def inizialize_janus_kb():
     assert len(paths) > 0
+    assert len(routings) > 0
     
     janus.consult('routing_core.pl')
     
