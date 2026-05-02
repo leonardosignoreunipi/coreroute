@@ -11,11 +11,13 @@ PCKT_SIZE = 256
 flows = [
     ("f1", "s1", "s2", 20, 3),   
     ("f2", "s1", "s2", 20, 3),
+    ("f3", "s1", "s2", 20, 1),
 ]
  
 routers = [
     ("r1", 1), ("r2", 1), ("r3", 1),
-    ("r4", 1), ("r5", 1), ("r6", 1)
+    ("r4", 1), ("r5", 1), ("r6", 1),
+    ("r7", 1), ("r8", 1), ("r9", 1)
 ]
  
 hosts = [
@@ -24,7 +26,7 @@ hosts = [
 ]
  
 links = [
-    ("h1", "r1", 2048, 1),
+    ("h1", "r1", 1024, 1),
     ("r1", "r2", 2048, 1),
     ("r2", "r3", 2048, 1),
     ("r3", "h2", 1024, 1),
@@ -32,16 +34,25 @@ links = [
     ("r4", "r5", 2048, 1),
     ("r5", "r6", 2048, 1),
     ("r3", "r6", 2048, 1),
-    ("r6", "h2", 1024, 1)
+    ("r6", "h2", 1024, 1), 
+    ("h1", "r7", 256, 1),
+    ("r7", "r8", 256, 1),
+    ("r8", "r9", 0, 1),
+    ("r9", "h2", 256, 1),
+
+    ("r8","r5",256,1),
+    ("r5", "r9", 256, 1)
 ]
 
 paths = [
     ("old_path", "h1", "h2", ["h1", "r1", "r2", "r3", "h2"]),
+    ("small_path", "h1", "h2", ["h1", "r7", "r8", "r9", "h2"]),
 ]
 
 routings = [
     ("f1", "old_path"),
-    ("f2", "old_path")
+    ("f2", "old_path"),
+    ("f3", "small_path"),
 ]
 
 def build_graph(hosts, routers, links):
@@ -64,15 +75,6 @@ def inizialize_janus_kb():
     
     janus.consult('routing_core.pl')
     
-    janus.query_once("retractall(pcktSize(_, _))")
-    janus.query_once("retractall(speedOfLight(_))")
-    janus.query_once("retractall(host(_, _))")
-    janus.query_once("retractall(router(_, _))")
-    janus.query_once("retractall(link(_, _, _, _))")
-    janus.query_once("retractall(flow(_, _, _, _, _))")
-    janus.query_once("retractall(routing(_, _))")
-    janus.query_once("retractall(path(_, _, _, _))")
-    janus.query_once("retractall(pathsCandidates(_, _))")
     
     janus.query_once("assertz(pcktSize(_,PcktSize))", {"PcktSize": PCKT_SIZE})
     janus.query_once("assertz(speedOfLight(SpeedOfLight))", {"SpeedOfLight": SPEED_OF_LIGHT})
@@ -147,10 +149,13 @@ def print_flow_paths():
 def get_path_edges(path):
     return set(frozenset([u, v]) for u, v in zip(path[:-1], path[1:]))
 
-def diff_score(oldPath, newPath):
+def diff_score(oldPath, newPath): 
     old_edges = get_path_edges(oldPath)
     new_edges = get_path_edges(newPath)
-    return len(new_edges - old_edges)
+    return len(old_edges.symmetric_difference(new_edges)) 
+
+def get_path_length(G, path):
+    return sum(G[u][v]['length'] for u, v in zip(path[:-1], path[1:]))
 
 def build_heap(G, old_path):
     flowHeap = []
@@ -158,14 +163,15 @@ def build_heap(G, old_path):
     src = old_path[0]
     dst = old_path[-1]
         
-    all_paths = list(nx.all_simple_paths(G, source=src, target=dst))# :(
+    all_paths = list(nx.all_simple_paths(G, source=src, target=dst))
     for newPath in all_paths:
         diffScore = diff_score(old_path, newPath)
-        heapq.heappush(flowHeap, (diffScore, newPath))
+        pathLength = get_path_length(G, newPath)
+        heapq.heappush(flowHeap, (diffScore, pathLength, newPath))
     
     return flowHeap
 
-def searchCandidates(G, old_path, max_candidates=5):
+def search_candidates(G, old_path, max_candidates=5):
     candidates = []
         
     src = old_path[0]
@@ -174,14 +180,16 @@ def searchCandidates(G, old_path, max_candidates=5):
     old_edges = set(frozenset([u, v]) for u, v in zip(old_path[:-1], old_path[1:]))
     
     def weight_function(u, v, edge_attr):
-        return 0 if frozenset([u, v]) in old_edges else 1  
+        return 0 if frozenset([u, v]) in old_edges else 1 #TODO se cambio la direzione di un arco devo pagare!!!
     
     try:
         generator = nx.shortest_simple_paths(G, src, dst, weight=weight_function)
         
         for _ in range(max_candidates):
-            path = next(generator)
-            candidates.append(path)
+            newPath = next(generator)
+            diffScore = diff_score(old_path, newPath) #TODO devo finire l'intervallo con la stessa lunghezza
+            pathLength = len(newPath)
+            heapq.heappush(candidates, (diffScore, pathLength, newPath))
             
     except (nx.NetworkXNoPath, StopIteration):
         pass    
@@ -197,9 +205,9 @@ def partition():
     result = janus.query_once(query)
     return result["OkFlows"], result["KoFlows"]
 
-def crRouting(G, flowNodes, okflows, koflows):
+def cr_routing(G, flowNodes, okflows, koflows):
     
-    flow_rates = {f[0]: f[4] for f in flows} #sort flows by decreasing packet rate
+    flow_rates = {f[0]: f[4] for f in flows} #sort global lows by decreasing packet rate
     koflows.sort(key=lambda routing: flow_rates[routing["flow"]], reverse=True)
     
     temp_koflows = list(koflows)
@@ -207,17 +215,17 @@ def crRouting(G, flowNodes, okflows, koflows):
     while len(temp_koflows) > 0:
         routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
         flowId = routing["flow"]
-        nodes = flowNodes[flowId]
+        nodes = flowNodes[flowId] #TODO considerare il caso in cui non esista il path.
         requiredBandwidth = flow_rates[flowId] * PCKT_SIZE
         
-        Gpruned = pruningPerBandwith(G,requiredBandwidth)
+        Gpruned = pruning_per_bandwith(G, requiredBandwidth)
         
-        candidates = searchCandidates(Gpruned, nodes, max_candidates=5)
+        candidates = search_candidates(Gpruned, nodes)
         if len(candidates) == 0:
             print(f"Not valid paths for flow: {flowId}")
-        
+        print(f"\nCandidates for flow {flowId}: {candidates}")
         pathsIds = []
-        for index, nodes in enumerate(candidates):
+        for index, (diffScore, pathLength, nodes) in enumerate(candidates):
             pathId = f"{flowId}_{index + 1}"
             pathsIds.append(pathId)
             janus.query_once("assertz(path(PathId, Src, Dst, Path))", {"PathId": pathId, "Src": nodes[0], "Dst": nodes[-1], "Path": nodes})
@@ -228,6 +236,7 @@ def crRouting(G, flowNodes, okflows, koflows):
 
     ko_list = f"[{', '.join(ko_terms)}]"
     ok_list = f"[{', '.join(ok_terms)}]"
+    
     query = f"""
         crRouting({ko_list}, {ok_list}, _NewValidRoutingsTemp),
         findall(_{{flowId: _F, pathId: _P}}, member(routing(_F,_P), _NewValidRoutingsTemp), NewValidRoutings).
@@ -246,7 +255,7 @@ def update_janus_kb(newValidRoutings):
     for r in newValidRoutings:
                 janus.query_once("assertz(routing(FlowId, PathId))", {"FlowId":r['flowId'], "PathId":r['pathId']})
 
-def pruningPerBandwith(G, requireBandwidth):
+def pruning_per_bandwith(G, requireBandwidth):
     def filter_edge(u, v):
         return G[u][v]['bw'] >= requireBandwidth
     
@@ -257,16 +266,16 @@ def __main__():
     
     G = build_graph(hosts, routers, links)
     
-    inizialize_janus_kb(G)
+    inizialize_janus_kb()
     
     pathsDict = {p[0]: p[3] for p in paths}
-    flowsNodes = {f_id: pathsDict[p_id] for f_id, p_id in routings}
+    flowsNodesDict = {f_id: pathsDict[p_id] for f_id, p_id in routings}
     
     okRoutings, koRoutings = partition()
     
-    newValidRoutings = crRouting(G, flowsNodes, okRoutings, koRoutings)
+    newValidRoutings = cr_routing(G, flowsNodesDict, okRoutings, koRoutings)
     
-    update_janus_kb(newValidRoutings)
+    update_janus_kb(newValidRoutings) #TODO: cancellare solo i routing ko prima di assertare i nuovi
     
     print_flow_paths()
     

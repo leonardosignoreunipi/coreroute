@@ -24,7 +24,7 @@ crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings) :-
     crRouting(Tail, [routing(FlowId, NewValidPathId)|OldRoutings], NewRoutings).
  crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings) :-
      crRouting(Tail, [routing(FlowId, PathId)|OldRoutings], NewRoutings).
-crRouting([], NewValidRoutings, NewValidRoutings) :- !.
+crRouting([], NewValidRoutings, NewValidRoutings).
 
 reRoute(FlowId, Routings, NextPathId) :-
     nextCandidate(FlowId, NextPathId), 
