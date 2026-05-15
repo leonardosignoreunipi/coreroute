@@ -94,18 +94,18 @@ find_valid_paths(FlowId, Path, OkRoutings) :-
     host(SrcHost, SrcServices), member(SrcService, SrcServices),
     host(DstHost, DstServices), member(DstService, DstServices),
 
-    requiredBandwidth(FlowId, requiredBandwidth),
+    requiredBandwidth(FlowId, RequiredBandwidth),
 
-    search_path(FlowId, requiredBandwidth, SrcHost, DstHost, [SrcHost], Path, 0, MaxLatency, OkRoutings).
+    search_path(FlowId, RequiredBandwidth, SrcHost, DstHost, [SrcHost], Path, 0, MaxLatency, OkRoutings).
 
 search_path(_, _, Dst, Dst, Visited, Path, _, _, _) :- reverse(Visited, Path).
 
-search_path(FlowId, requiredBandwidth, Current, Dst, Visited, Path, CurrLatency, MaxLatency, OkRoutings) :-
+search_path(FlowId, RequiredBandwidth, Current, Dst, Visited, Path, CurrLatency, MaxLatency, OkRoutings) :-
     s_link(Current, Next, _, Length),\+ member(Next, Visited),
     
     speedOfLight(SpeedOfLight),pcktSize(_,PcktSize),
 
-    availableBandwidthLink(FlowId, Current, Next, OkRoutings, EffectiveBw), EffectiveBw >= requiredBandwidth,
+    availableBandwidthLink(FlowId, Current, Next, OkRoutings, EffectiveBw), EffectiveBw >= RequiredBandwidth,
 
     node_qtime(Current, QTime1),
     Dtrasm is PcktSize / EffectiveBw,
@@ -114,7 +114,7 @@ search_path(FlowId, requiredBandwidth, Current, Dst, Visited, Path, CurrLatency,
 
     NewLatency =< MaxLatency,
 
-    search_path(FlowId, requiredBandwidth, Next, Dst, [Next|Visited], Path, NewLatency, MaxLatency, OkRoutings).
+    search_path(FlowId, RequiredBandwidth, Next, Dst, [Next|Visited], Path, NewLatency, MaxLatency, OkRoutings).
 
 % --- UTILS ---
 s_link(X, Y, Bandwidth, Length) :- link(X, Y, Bandwidth, Length).
