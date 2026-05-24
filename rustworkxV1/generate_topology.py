@@ -1,14 +1,15 @@
 import rustworkx as rx
 import random
 import json
+import sys
 
 def generate_sdn_topology(num_routers=30, num_hosts=10, num_flows=1, filename="topology_stress_test.json"):
     print(f"Generazione topologia in corso...")
     
     # 1. GENERAZIONE RETE CORE (ROUTERS)
-    # Usiamo Barabasi-Albert: crea reti scale-free simili a Internet. 
-    # Il parametro '2' indica che ogni nuovo router si collega a 2 router esistenti.
     core_graph = rx.barabasi_albert_graph(num_routers, 2)
+    #er_graph = rx.undirected_gnp_random_graph(100, 0.05, seed=42)
+    #internet_graph = rx.PyGraph.read_edgelist("as-733.txt", delim=" ")
     
     routers = []
     # Mappatura indici rustworkx -> ID stringa (es. 0 -> "r0")
@@ -45,11 +46,20 @@ def generate_sdn_topology(num_routers=30, num_hosts=10, num_flows=1, filename="t
         
         # Se è un collegamento host-router, diamo molta banda (nessun collo di bottiglia locale)
         if src_id.startswith('h') or dst_id.startswith('h'):
-            bw = 10000.0
+            bw = num_flows * 2048
             length = 1.0
         else:
-            # Se è un collegamento router-router, la banda varia per creare colli di bottiglia
-            bw = random.choice([512.0, 1024.0, 2048.0, 4096.0])
+            # LINK CORE (Router -> Router)
+            # Scaliamo realisticamente in base al carico della simulazione
+            if num_flows <= 20:
+                # Simulazione Piccola: Link da 2, 4 e 10 Gbps
+                bw = random.choice([2048.0, 4096.0, 10000.0])
+            elif num_flows <= 150:
+                # Simulazione Media: Backbone da 40 Gbps e 100 Gbps
+                bw = random.choice([40000.0, 100000.0])
+            else:
+                # Simulazione Massiva (1000+ flussi): Backbone Ultra-Broadband (100G / 400G)
+                bw = random.choice([100000.0, 400000.0])
             length = float(random.randint(1, 3))
             
         links.append({
@@ -88,31 +98,9 @@ def generate_sdn_topology(num_routers=30, num_hosts=10, num_flows=1, filename="t
             "rate": float(random.randint(1, 4))
         })
         
-        # Calcoliamo il percorso iniziale per questo flusso
-        try:
-            # Calcolo dei cammini minimi (hop count) dalla sorgente
-            paths_from_src = rx.dijkstra_shortest_paths(core_graph, rx_src, target=rx_dst)
-            
-            # Estraiamo l'array di nodi per la nostra destinazione
-            path_indices = paths_from_src[rx_dst]
-            path_nodes = [idx_to_id[idx] for idx in path_indices]
-            
-            path_id = f"p_{flow_id}_init"
-            
-            paths.append({
-                "id": path_id,
-                "src": src_id,
-                "dst": dst_id,
-                "nodes": path_nodes
-            })
-            
-            routings.append({
-                "flow_id": flow_id,
-                "path_id": path_id
-            })
-            
-        except KeyError:
-            print(f"Attenzione: Nessun percorso possibile tra {src_id} e {dst_id}")
+        path_id = f"p_{flow_id}_init"
+        paths.append({"id": path_id, "src": hosts[src_host_idx]["id"], "dst": hosts[dst_host_idx]["id"], "nodes": []})
+        routings.append({"flow_id": flow_id, "path_id": path_id})
 
     # 5. SALVATAGGIO IN JSON
     topology = {
@@ -137,9 +125,19 @@ def generate_sdn_topology(num_routers=30, num_hosts=10, num_flows=1, filename="t
 # --- ESECUZIONE ---
 if __name__ == "__main__":
     # Puoi giocare con questi parametri per generare topologie microscopiche o gigantesche
+
+    if len(sys.argv) == 5:
+        num_routers = int(sys.argv[1])
+        num_hosts = int(sys.argv[2])
+        num_flows = int(sys.argv[3])
+        filename = sys.argv[4]
+    else:
+        print("Usage: python generate_topology.py <num_routers> <num_hosts> <num_flows> <filename>")
+        sys.exit(0)
+    
     generate_sdn_topology(
-        num_routers=2**10,
-        num_hosts=2,
-        num_flows=3,
-        filename="massive_topology.json"
+        num_routers,
+        num_hosts,
+        num_flows,
+        filename
     )

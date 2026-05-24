@@ -2,6 +2,7 @@ from ConfigLoader import ConfigLoader
 from PhysicalNetwork import PhysicalNetwork as Net
 from RoutingEngine import RoutingEngine as Engine
 from JanusKB import JanusKB as PrologKB
+import sys
 
 
 class SDNcontroller:
@@ -30,7 +31,7 @@ class SDNcontroller:
         print(f"\n\nNewValidRoutings: {newValidRoutings}")
             
         self.kb.update_janus_kb(newValidRoutings)
-        #self.draw_topology()
+        self.draw_topology()
 
         
 
@@ -125,9 +126,15 @@ class SDNcontroller:
         plt.show()
 
 def __main__():
-    config = ConfigLoader("massive_topology.json").load()
+    if len(sys.argv) == 2:
+        topology_file = sys.argv[1]
+    else:
+        print("Usage: python SDNcontroller.py <topology_file>")
+        sys.exit(1)
+
+    config = ConfigLoader(topology_file).load()
     network = Net(config)
-    kb = PrologKB(config, "../routing_core.pl")
+    kb = PrologKB(config, "routing_core.pl")
     engine = Engine(network, kb, config)
     controller = SDNcontroller(network, kb, config, engine)
     controller.run()
