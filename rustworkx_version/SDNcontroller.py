@@ -14,7 +14,7 @@ class SDNcontroller:
 
     def run(self):
         self.kb.initialize_kb()
-        print()
+        
         for flow in self.config.flows.values():
             print(f"flusso {flow.id}: src: {flow.src_service} dst: {flow.dst_service} max_latency: {flow.max_latency} rate: {flow.rate}")
         
@@ -31,8 +31,25 @@ class SDNcontroller:
         print(f"\n\nNewValidRoutings: {newValidRoutings}")
             
         self.kb.update_janus_kb(newValidRoutings)
-        self.draw_topology()
+        #self.draw_topology()
 
+    def continuos_reasoning(self):
+        """
+        Esegue il reasoning continuo del sistema SDN.
+        1) okflows, koflows partition
+        2) newvalidroutings from okflows, koflows
+        3) update janus kb
+        return newvalidroutings
+        """
+        ok_flows, ko_flows = [], []
+        ok_flows, ko_flows = self.engine.get_partition()
+        print(f"\n[*] Partition ottenuta: {len(ok_flows)} ok_flows, {len(ko_flows)} ko_flows.")
+
+        new_valid_routings = self.engine.cr_routing(ok_flows, ko_flows)
+        print(f"[*] Nuovi routing validi ottenuti: {len(new_valid_routings)}")
+        
+        self.kb.update_janus_kb(new_valid_routings)
+        return new_valid_routings
         
 
     def draw_topology(self, save_path=None):

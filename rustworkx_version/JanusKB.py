@@ -27,7 +27,6 @@ class JanusKB:
         for r in self.config.routings:
             j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": r.flow_id, "PathId": r.path_id})
 
-
     def update_janus_kb(self, newValidRoutings):
         j.query_once("retractall(routing(_, _))")
         for r in newValidRoutings:

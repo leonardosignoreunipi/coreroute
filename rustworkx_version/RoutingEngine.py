@@ -4,6 +4,7 @@ import ConfigLoader
 import rustworkx as rx
 import heapq
 import random
+import numpy as np
 
 class RoutingEngine:
     def __init__(self, network: PhysicalNetwork, kb: JanusKB, config: ConfigLoader):
@@ -113,9 +114,19 @@ class RoutingEngine:
 
         print(f"candidates for flow: {flow_id} from {old_path} src={src} dst={dst} bw={self.config.flows[flow_id].required_bw(self.config.pckt_size)}")
 
-        for path_idx in rx.all_simple_paths(graph_pruned, src, dst, cutoff=6):
+
+        distance_metrix = rx.distance_matrix(graph_pruned, null_value=np.inf)
+        d = np.max(distance_metrix[distance_metrix != np.inf])
+        print(f"graph diameter: {d}")
+        
+        all_paths = list(rx.all_simple_paths(graph_pruned, src, dst, cutoff=int(d)*2))
+        print(f"Found {len(all_paths)} candidate paths for flow {flow_id}.")
+        
+        for path_idx in all_paths:
             path = [self.network.inv_node_map[node_idx] for node_idx in path_idx]
-            print(f"\t{path}")
+            #print(f"\t{path}")
+            #TODO considerare le coppie src, dst e non tutti i flussi. 
+            #TODO: tagliare il numero di path
             heapq.heappush(candidates, (self.diff_score(old_path, path), path))
         
         return candidates
