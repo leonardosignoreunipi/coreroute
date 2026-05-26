@@ -27,6 +27,26 @@ class JanusKB:
         for r in self.config.routings:
             j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": r.flow_id, "PathId": r.path_id})
 
+    def update_links_bandwidth(self, degraded_links: list[tuple]): 
+        updated_count = 0
+        for src, dst, new_bw in degraded_links:
+            # Recuperiamo la lunghezza attuale del link per non perderla
+            query = "link(Src, Dst, _, Length) ; link(Dst, Src, _, Length)"
+            res = j.query_once(query, {"Src": src, "Dst": dst})
+            
+            if res:
+                length = res["Length"]
+                
+                # Rimuoviamo il vecchio fatto in entrambe le direzioni (come visto in precedenza)
+                j.query_once("retractall(link(Src, Dst, _, _))", {"Src": src, "Dst": dst})
+                j.query_once("retractall(link(Dst, Src, _, _))", {"Src": src, "Dst": dst})
+                
+                # Asseriamo il nuovo fatto con la banda aggiornata
+                j.query_once("assertz(link(Src, Dst, BW, Length))", {"Src": src, "Dst": dst, "BW": new_bw, "Length": length})
+                updated_count += 1
+                
+        return updated_count
+    
     def update_janus_kb(self, newValidRoutings):
         j.query_once("retractall(routing(_, _))")
         for r in newValidRoutings:

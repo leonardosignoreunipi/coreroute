@@ -58,15 +58,14 @@ class RoutingEngine:
         Esegue il cr-routing per risolvere i ko-flows
         """
         
-        
         if len(ko_flows) == 0:
             print("Nessun KoFlow trovato!")
             return ok_flows
         
-        flowsNodes = {r.flow_id: self.config.paths[r.path_id].nodes for r in ko_flows}
+        flowsNodes = {r.flow_id: self.kb.get_path(r.path_id) for r in ko_flows}
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
-
         temp_koflows = list(ko_flows)
+        graph = self.network.graph
         
         while len(temp_koflows) > 0:
             routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
@@ -83,9 +82,9 @@ class RoutingEngine:
                 dst = self.network.node_map[old_path[-1]] #map nodes stringId to int
             
 
-            Gpruned = self.network.pruning_per_bandwith(self.config.flows[flowId].required_bw(self.config.pckt_size))
-
-            candidates = self.search_candidates(Gpruned, src, dst, flowId, old_path)
+            graph_pruned = self.network.pruning_per_bandwith(self.config.flows[flowId].required_bw(self.config.pckt_size))
+            candidates = self.search_candidates(graph_pruned, src, dst, flowId, old_path)
+            
             if len(candidates) == 0:
                 print(f"Not valid paths for flow: {flowId}")
             pathsIds = []
