@@ -96,9 +96,11 @@ class JanusKB:
         return result["Nodes"]
 
     def put_candidates_paths(self, flowId: str, pathIds: List[str]):
+        j.query_once("retractall(pathsCandidates(FlowId, _))", {"FlowId": flowId})
         j.query_once("assertz(pathsCandidates(FlowId, PathIds))", {"FlowId": flowId, "PathIds": pathIds})
 
     def put_path(self, pathId: str, src: str, dst: str, path: List[str]):
+        j.query_once("retractall(path(PathId, _, _, _))", {"PathId": pathId})
         j.query_once("assertz(path(PathId, Src, Dst, Path))", {"PathId": pathId, "Src": src, "Dst": dst, "Path": path})
     
     def put_routing(self, flowId: str, pathId: str):

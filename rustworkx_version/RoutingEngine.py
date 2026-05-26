@@ -111,16 +111,15 @@ class RoutingEngine:
         """
         candidates = []
 
-        print(f"candidates for flow: {flow_id} from {old_path} src={src} dst={dst} bw={self.config.flows[flow_id].required_bw(self.config.pckt_size)}")
+        print(f"Search candidates for flow: {flow_id} from {old_path} src={src} dst={dst} bw={self.config.flows[flow_id].required_bw(self.config.pckt_size)}...")
 
 
         distance_metrix = rx.distance_matrix(graph_pruned, null_value=np.inf)
         d = np.max(distance_metrix[distance_metrix != np.inf])
-        print(f"graph diameter: {d}")
+        print(f"in pruned_graph\n\t-diameter: {d}\n\t- edges: {len(graph_pruned.edge_list())}\n\t- nodes: {len(graph_pruned.node_indices())}")
         
-        all_paths = list(rx.all_simple_paths(graph_pruned, src, dst, cutoff=int(d)*2))
-        print(f"Found {len(all_paths)} candidate paths for flow {flow_id}.")
-        
+        all_paths = rx.all_simple_paths(graph_pruned, src, dst, cutoff=int(d)*2)
+        print(f"Found {len(all_paths)} candidates.")
         for path_idx in all_paths:
             path = [self.network.inv_node_map[node_idx] for node_idx in path_idx]
             #print(f"\t{path}")

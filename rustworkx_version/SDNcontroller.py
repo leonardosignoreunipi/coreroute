@@ -49,8 +49,8 @@ class SDNcontroller:
         new_valid_routings = self.engine.cr_routing(ok_flows, ko_flows)
         self.kb.update_janus_kb(new_valid_routings)
         
-        ok_flows, temp_ko_flows = self.engine.get_partition()
-        print(f"[*] New valid routings: {len(ok_flows)/len(ko_flows)*100:.2f}% validi.")
+        temp_ok_flows, temp_ko_flows = self.engine.get_partition()
+        print(f"[*] New valid routings: "f"{len(new_valid_routings)}. Nuova partition: {len(temp_ok_flows)} ok_flows, {len(temp_ko_flows)} ko_flows.")
         
         return new_valid_routings
         

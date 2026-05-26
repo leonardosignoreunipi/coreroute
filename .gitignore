@@ -3,8 +3,4 @@ main_rustworkx.py
 topology.json
 project
 topologie_test
-run_benchmark.py
-test.py
 grafico.py
-genera_topologie.py
-generate_topology.py
