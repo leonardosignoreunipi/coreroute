@@ -118,13 +118,16 @@ class RoutingEngine:
         d = np.max(distance_metrix[distance_metrix != np.inf])
         print(f"in pruned_graph\n\t-diameter: {d}\n\t- edges: {len(graph_pruned.edge_list())}\n\t- nodes: {len(graph_pruned.node_indices())}")
         
-        all_paths = rx.all_simple_paths(graph_pruned, src, dst, cutoff=int(d)*2)
+        all_paths = rx.all_shortest_paths(graph_pruned, src, dst)
         print(f"Found {len(all_paths)} candidates.")
-        for path_idx in all_paths:
+        for path_idx in all_paths[:1000000]:#evito l'esplosione combinatoria
             path = [self.network.inv_node_map[node_idx] for node_idx in path_idx]
             #print(f"\t{path}")
             #TODO considerare le coppie src, dst e non tutti i flussi. 
             #TODO: tagliare il numero di path
-            heapq.heappush(candidates, (self.diff_score(old_path, path), path))
+            if old_path is not None:
+                heapq.heappush(candidates, (self.diff_score(old_path, path), path))
+            else: 
+                heapq.heappush(candidates, (0, path))
         
         return candidates
