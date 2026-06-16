@@ -47,6 +47,10 @@ class TopologyConfig:
             raise TopologyConfigError(f"At least {self.MIN_LINKS} link(s) required.")
         if len(self.flows) < self.MIN_FLOWS:
             raise TopologyConfigError(f"At least {self.MIN_FLOWS} flow(s) required.")
+        if len(self.paths) < 1:
+            raise TopologyConfigError(f"At least one path required.")
+        if len(self.routings) < len(self.flows):
+            raise TopologyConfigError(f"At least one routing required for each flow. If you don't have valid routings, put with an empty path with Nodes = [].")
 
 class ConfigLoader:
     def __init__(self, config_path: str):

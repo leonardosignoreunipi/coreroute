@@ -118,7 +118,8 @@ class RoutingEngine:
         d = np.max(distance_metrix[distance_metrix != np.inf])
         print(f"in pruned_graph\n\t-diameter: {d}\n\t- edges: {len(graph_pruned.edge_list())}\n\t- nodes: {len(graph_pruned.node_indices())}")
         
-        all_paths = rx.all_shortest_paths(graph_pruned, src, dst)
+        
+        all_paths = rx.graph_all_simple_paths(graph_pruned, src, dst, cutoff=int(d*2))
         print(f"Found {len(all_paths)} candidates.")
         for path_idx in all_paths[:1000000]:#evito l'esplosione combinatoria
             path = [self.network.inv_node_map[node_idx] for node_idx in path_idx]
