@@ -82,8 +82,8 @@ class JanusKB:
             raise JanusKBError(f"Error during partitioning: {e}")
     
     def query_cr_routings(self, koflows: List[Routing],okflows: List[Routing] ) -> List[Routing]:
-        ko_terms = [f"routing({r.flow_id}, {r.path_id})" for r in koflows]
-        ok_terms = [f"routing({r.flow_id}, {r.path_id})" for r in okflows]
+        ko_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in koflows]
+        ok_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in okflows]
 
         ko_list = f"[{', '.join(ko_terms)}]"
         ok_list = f"[{', '.join(ok_terms)}]"

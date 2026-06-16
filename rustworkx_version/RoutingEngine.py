@@ -1,13 +1,43 @@
 import PhysicalNetwork
 import JanusKB
 import ConfigLoader
-import rustworkx as rx
 import heapq
 import random
-import numpy as np
+import logging
+from collections import deque
+
+logger = logging.getLogger(__name__)
+
+def _bfs_simple_paths(graph, source, target, cutoff):
+    """
+    Generator that yields simple paths (lists of node indices) from source to target
+    in BFS order (shortest paths first). Caller breaks after collecting enough candidates,
+    so the full exponential enumeration is never triggered on dense graphs.
+    """
+    queue = deque([(source, [source], {source})])
+    while queue:
+        node, path, visited = queue.popleft()
+        for neighbor in graph.neighbors(node):
+            if neighbor in visited:
+                continue
+            new_path = path + [neighbor]
+            if neighbor == target:
+                yield new_path
+            elif len(new_path) < cutoff:
+                queue.append((neighbor, new_path, visited | {neighbor}))
+
+class RoutingEngineError(Exception):
+    """Custom exception for RoutingEngine-related errors."""
+    pass
 
 class RoutingEngine:
     def __init__(self, network: PhysicalNetwork, kb: JanusKB, config: ConfigLoader):
+        if network is None:
+            raise RoutingEngineError("Network cannot be None.")
+        if kb is None:
+            raise RoutingEngineError("Knowledge Base cannot be None.")
+        if config is None:
+            raise RoutingEngineError("Config cannot be None.")
         self.network = network
         self.kb = kb
         self.config = config
@@ -39,19 +69,24 @@ class RoutingEngine:
                 dst_candidate.append(host)
         
         if len(src_candidate) == 0 or len(dst_candidate) == 0:
-            raise Exception(f"No src or dst service found for flow: {flow_id}")
+            raise RoutingEngineError(f"No src or dst service found for flow: {flow_id}")
         
         src = random.choice(src_candidate).id
-        dst = random.choice(dst_candidate).id
 
-        while src == dst:
-            dst = random.choice(dst_candidate).id
+        valid_dst = [h for h in dst_candidate if h.id != src]
+        if not valid_dst:
+            raise RoutingEngineError(f"No valid distinct dst for flow {flow_id}")
+        dst = random.choice(valid_dst).id
         
         return src, dst
 
     def get_partition(self):
         """ottiene la partizione dei flussi che hanno già un path assegnato"""
-        return self.kb.query_partition()
+        try:
+            return self.kb.query_partition()
+        except Exception as e:
+            logger.error(f"Error retrieving partition: {e}")
+            raise RoutingEngineError(f"Error retrieving partition: {e}")
 
     def cr_routing(self, ok_flows, ko_flows):
         """
@@ -59,13 +94,12 @@ class RoutingEngine:
         """
         
         if len(ko_flows) == 0:
-            print("Nessun KoFlow trovato!")
+            logger.info("Nessun KoFlow trovato!")
             return ok_flows
         
         flowsNodes = {r.flow_id: self.kb.get_path(r.path_id) for r in ko_flows}
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
         temp_koflows = list(ko_flows)
-        graph = self.network.graph
         
         while len(temp_koflows) > 0:
             routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
@@ -86,11 +120,12 @@ class RoutingEngine:
             candidates = self.search_candidates(graph_pruned, src, dst, flowId, old_path)
             
             if len(candidates) == 0:
-                print(f"Not valid paths for flow: {flowId}")
+                logger.warning(f"Not valid paths for flow: {flowId}")
             pathsIds = []
             index = 0
 
-            while len(candidates) > 0:
+            MAX_CANDIDATES = 20
+            while len(candidates) > 0 and index < MAX_CANDIDATES:
                 
                 score, nodes = heapq.heappop(candidates)
 
@@ -104,31 +139,29 @@ class RoutingEngine:
         return self.kb.query_cr_routings(ko_flows, ok_flows)
 
 
-    def search_candidates(self, graph_pruned, src, dst, flow_id, old_path=None): 
-        """ 
-            Trova tutti i path tra src e dst con al massimo 6 hop di distanza 
-            restituisce una lista di path come ["id1", "id2", "id3"]
+    def search_candidates(self, graph_pruned, src, dst, flow_id, old_path=None):
         """
+        Trova i migliori candidati tra src e dst usando BFS con early stop.
+        Raccoglie al massimo MAX_ENUM path (i più corti prima), poi li ordina
+        per diff_score rispetto al path precedente e restituisce una heap.
+        """
+        MAX_CUTOFF = 8 
+        MAX_ENUM   = 20 
+
         candidates = []
+        found = 0
 
-        print(f"Search candidates for flow: {flow_id} from {old_path} src={src} dst={dst} bw={self.config.flows[flow_id].required_bw(self.config.pckt_size)}...")
+        for path_idx in _bfs_simple_paths(graph_pruned, src, dst, MAX_CUTOFF):
+            if found >= MAX_ENUM:
+                break
+            try:
+                path = [self.network.inv_node_map[idx] for idx in path_idx]
+            except KeyError as e:
+                logger.error(f"Error mapping node indices to IDs: {e}")
+                continue
+            score = self.diff_score(old_path, path) if old_path else 0
+            heapq.heappush(candidates, (score, path))
+            found += 1
 
-
-        distance_metrix = rx.distance_matrix(graph_pruned, null_value=np.inf)
-        d = np.max(distance_metrix[distance_metrix != np.inf])
-        print(f"in pruned_graph\n\t-diameter: {d}\n\t- edges: {len(graph_pruned.edge_list())}\n\t- nodes: {len(graph_pruned.node_indices())}")
-        
-        
-        all_paths = rx.graph_all_simple_paths(graph_pruned, src, dst, cutoff=int(d*2))
-        print(f"Found {len(all_paths)} candidates.")
-        for path_idx in all_paths[:1000000]:#evito l'esplosione combinatoria
-            path = [self.network.inv_node_map[node_idx] for node_idx in path_idx]
-            #print(f"\t{path}")
-            #TODO considerare le coppie src, dst e non tutti i flussi. 
-            #TODO: tagliare il numero di path
-            if old_path is not None:
-                heapq.heappush(candidates, (self.diff_score(old_path, path), path))
-            else: 
-                heapq.heappush(candidates, (0, path))
-        
+        logger.info(f"search_candidates: flow={flow_id} enumerated={found} paths")
         return candidates
