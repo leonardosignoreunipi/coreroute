@@ -4,27 +4,45 @@ import ConfigLoader
 import heapq
 import random
 import logging
-from collections import deque
 
 logger = logging.getLogger(__name__)
 
-def _bfs_simple_paths(graph, source, target, cutoff):
+def _priority_path_search(graph, source, target, old_edges, cutoff):
     """
-    Generator that yields simple paths (lists of node indices) from source to target
-    in BFS order (shortest paths first). Caller breaks after collecting enough candidates,
-    so the full exponential enumeration is never triggered on dense graphs.
+    Yields (cost, path) for simple paths from source to target in strictly
+    non-decreasing cost order.
+
+    Edge costs: -1 if the edge belongs to old_edges (reused), +1 if new.
+    Negative weights are safe because visited tracking prevents cycles — a
+    simple path never revisits a node, so negative cycles are unreachable.
+
+    Ordering guarantee (same logic as Dijkstra): a complete path is yielded
+    only when popped from the heap. At that point every other entry in the
+    heap has cost >= the one just popped, so no cheaper complete path can
+    still be pending.
     """
-    queue = deque([(source, [source], {source})])
-    while queue:
-        node, path, visited = queue.popleft()
+    counter = 0
+    heap = [(0, counter, (source,), {source})]
+
+    while heap:
+        cost, _, path_t, visited = heapq.heappop(heap)
+        node = path_t[-1]
+
+        if node == target:
+            yield (cost, list(path_t))
+            continue
+
         for neighbor in graph.neighbors(node):
             if neighbor in visited:
                 continue
-            new_path = path + [neighbor]
-            if neighbor == target:
-                yield new_path
-            elif len(new_path) < cutoff:
-                queue.append((neighbor, new_path, visited | {neighbor}))
+            edge_cost = -1 if (node, neighbor) in old_edges or (neighbor, node) in old_edges else 1
+            new_cost = cost + edge_cost
+            new_path = path_t + (neighbor,)
+            # Push complete paths (target reached) unconditionally;
+            # push partial paths only if still within the depth limit.
+            if neighbor == target or len(new_path) < cutoff:
+                counter += 1
+                heapq.heappush(heap, (new_cost, counter, new_path, visited | {neighbor}))
 
 class RoutingEngineError(Exception):
     """Custom exception for RoutingEngine-related errors."""
@@ -122,17 +140,12 @@ class RoutingEngine:
             if len(candidates) == 0:
                 logger.warning(f"Not valid paths for flow: {flowId}")
             pathsIds = []
-            index = 0
 
-            MAX_CANDIDATES = 20
-            while len(candidates) > 0 and index < MAX_CANDIDATES:
-                
-                score, nodes = heapq.heappop(candidates)
-
+            # candidates è già ordinata per diff_score (prodotta da _priority_path_search)
+            for index, (_, nodes) in enumerate(candidates):
                 pathId = f"{flowId}_{index + 1}"
                 pathsIds.append(pathId)
-                self.kb.put_path(pathId, nodes[0], nodes[-1], nodes)    
-                index += 1
+                self.kb.put_path(pathId, nodes[0], nodes[-1], nodes)
             
             self.kb.put_candidates_paths(flowId, pathsIds)
             
@@ -141,27 +154,32 @@ class RoutingEngine:
 
     def search_candidates(self, graph_pruned, src, dst, flow_id, old_path=None):
         """
-        Trova i migliori candidati tra src e dst usando BFS con early stop.
-        Raccoglie al massimo MAX_ENUM path (i più corti prima), poi li ordina
-        per diff_score rispetto al path precedente e restituisce una heap.
+        Trova i candidati tra src e dst usando una ricerca a coda di priorità
+        con costi {-1 riuso vecchio arco, +1 arco nuovo}. I path vengono prodotti
+        già in ordine crescente di diff_score — nessun heap di post-ordinamento.
         """
-        MAX_CUTOFF = 8 
-        MAX_ENUM   = 20 
+        MAX_CUTOFF = 8
+        MAX_ENUM   = 20
+
+        # Converti old_path (string IDs) in un insieme di coppie di indici interi
+        old_edges: set[tuple[int, int]] = set()
+        if old_path and len(old_path) > 1:
+            for u, v in zip(old_path[:-1], old_path[1:]):
+                u_idx = self.network.node_map.get(u)
+                v_idx = self.network.node_map.get(v)
+                if u_idx is not None and v_idx is not None:
+                    old_edges.add((u_idx, v_idx))
 
         candidates = []
-        found = 0
-
-        for path_idx in _bfs_simple_paths(graph_pruned, src, dst, MAX_CUTOFF):
-            if found >= MAX_ENUM:
+        for cost, path_idx in _priority_path_search(graph_pruned, src, dst, old_edges, MAX_CUTOFF):
+            if len(candidates) >= MAX_ENUM:
                 break
             try:
                 path = [self.network.inv_node_map[idx] for idx in path_idx]
             except KeyError as e:
                 logger.error(f"Error mapping node indices to IDs: {e}")
                 continue
-            score = self.diff_score(old_path, path) if old_path else 0
-            heapq.heappush(candidates, (score, path))
-            found += 1
+            candidates.append((cost, path))
 
-        logger.info(f"search_candidates: flow={flow_id} enumerated={found} paths")
+        logger.info(f"search_candidates: flow={flow_id} enumerated={len(candidates)} paths")
         return candidates

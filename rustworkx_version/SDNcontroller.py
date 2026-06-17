@@ -51,8 +51,8 @@ class SDNcontroller:
         
         temp_ok_flows, temp_ko_flows = self.engine.get_partition()
         print(f"[*] New valid routings: "f"{len(new_valid_routings)}. Nuova partition: {len(temp_ok_flows)} ok_flows, {len(temp_ko_flows)} ko_flows.")
-        
-        return new_valid_routings
+
+        return new_valid_routings, len(ko_flows)
         
 
     def draw_topology(self, save_path=None):
