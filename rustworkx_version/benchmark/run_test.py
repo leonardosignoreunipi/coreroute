@@ -2,6 +2,7 @@ import sys
 import time
 import random
 from pathlib import Path
+import logging
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -11,111 +12,109 @@ from PhysicalNetwork import PhysicalNetwork as Net
 from RoutingEngine import RoutingEngine as Engine
 from JanusKB import JanusKB as PrologKB
 
-class Test: 
+
+class Test:
     def __init__(self, sdn_controller: SDNcontroller):
         self.sdn_controller = sdn_controller
-        
-    def print_routings(self):
-        routings = self.sdn_controller.kb.get_routings()
-        print("\n[INFO] Routing attuali:")
-        for routing in routings:
-            flow_id = routing['flow_id']
-            path_id = routing['path_id']
-            path_nodes = routing['nodes']
-            print(f"Flow {flow_id} -> Path {path_id}: {path_nodes}")
-        
-    def perturbation(self, p_guasto):
-        """
-        Simula congestione o degrado sui link router-router con probabilità p_guasto.
-        Riduciamo la banda nominale in modo casuale [0.2, 0.7] e aggiorniamo Grafo e KB.
-        Ritorna il numero di link degradati.
-        """
+
+    def perturbation(self, pct_links: float):
+        """Select exactly pct_links fraction of router-router edges and update their
+        bandwidth as bw = bw_nominal * r, r ~ U(0.5, 1.5).
+        Returns the number of modified links."""
         graph = self.sdn_controller.network.graph
-        edges = graph.edge_indices()
-        degraded_links_rx = []
+        rr_edges = [
+            edge_idx for edge_idx in graph.edge_indices()
+            if not self._is_access_link(graph, edge_idx)
+        ]
 
-        for edge_idx in edges:
-            u, v = graph.get_edge_endpoints_by_index(edge_idx)
-            u_id = self.sdn_controller.network.inv_node_map[u]
-            v_id = self.sdn_controller.network.inv_node_map[v]
+        n_mod = max(1, int(pct_links * len(rr_edges)))
+        selected = random.sample(rr_edges, min(n_mod, len(rr_edges)))
 
-            if u_id.startswith('h') or v_id.startswith('h'): 
-                continue
-                
-            if random.random() < p_guasto:
-                edge_data = graph.get_edge_data_by_index(edge_idx)
-                
-                current_bw = edge_data['bw'] 
-                retention_factor = random.uniform(0.2, 0.7) 
-                new_bw = current_bw * retention_factor
-                
-                edge_data['bw'] = new_bw
-                graph.update_edge_by_index(edge_idx, edge_data)
-                
-                try:
-                    n1 = graph[u]
-                    n2 = graph[v]
-                    degraded_links_rx.append((n1['id'], n2['id'], new_bw))
-                    #print(f"[*] Link degradato: {self.sdn_controller.network.inv_node_map[u]} <-> {self.sdn_controller.network.inv_node_map[v]} | Nuova banda: {new_bw:.2f}")
-                except IndexError:
-                    print(f"Errore: node not found {u} or {v}.")
+        degraded = []
+        for edge_idx in selected:
+            edge_data = graph.get_edge_data_by_index(edge_idx)
+            bw_nominal = edge_data["bw_nominal"]
+            r = random.uniform(0.5, 1.5)
+            new_bw = bw_nominal * r
+            edge_data["bw"] = new_bw
+            graph.update_edge_by_index(edge_idx, edge_data)
+            degraded.append((edge_data["u"], edge_data["v"], new_bw))
 
-        # update KB with new bandwidths
-        updated_links = self.sdn_controller.kb.update_links_bandwidth(degraded_links_rx)
+        updated = self.sdn_controller.kb.update_links_bandwidth(degraded)
+        print(f"[*] Perturbation: {len(selected)} links modified ({pct_links*100:.0f}% of {len(rr_edges)} rr-links), {updated} updated in KB.")
+        return len(selected)
 
-        print(f"[*] Perturbazione applicata: {len(degraded_links_rx)} link degradati nel grafo, {updated_links} aggiornati nella KB.")
-        return len(degraded_links_rx)
+    def _is_access_link(self, graph, edge_idx) -> bool:
+        u, v = graph.get_edge_endpoints_by_index(edge_idx)
+        u_id = self.sdn_controller.network.inv_node_map[u]
+        v_id = self.sdn_controller.network.inv_node_map[v]
+        return u_id.startswith('h') or v_id.startswith('h')
 
 
-def main():   
-    if len(sys.argv) < 2: 
-        print("Usage: python test.py <topology_file>")
+def main():
+    logging.basicConfig(
+        level=logging.WARNING,
+        format='[%(asctime)s] %(levelname)s - %(name)s: %(message)s',
+        datefmt='%H:%M:%S'
+    )
+
+    if len(sys.argv) < 2:
+        print("Usage: python run_test.py <topology_file> [pct_links]")
         sys.exit(1)
-        
+
     topology_file = sys.argv[1]
+    pct_links = float(sys.argv[2]) if len(sys.argv) > 2 else 0.10
     kb_file = str(Path(__file__).parent.parent / "routing_core.pl")
-    p_guasto = 0.7
-    
+
     config = ConfigLoader(topology_file).load()
     network = Net(config)
     kb = PrologKB(config, kb_file)
     engine = Engine(network, kb, config)
-    
     controller = SDNcontroller(network, kb, config, engine)
     controller.kb.initialize_kb()
-    
-    print(f"[1] Topologia caricata: {network.graph.num_nodes()} nodi, {network.graph.num_edges()} archi.")
 
+    num_nodes = network.graph.num_nodes()
+    num_edges = network.graph.num_edges()
+    num_flows = len(config.flows)
+    print(f"[1] Topology loaded: {num_nodes} nodes, {num_edges} edges, {num_flows} flows.")
+
+    # --- [STEP 1] Init: CR routing with all flows KO (= full recompute on clean state) ---
+    print("[2] Init routing (all flows KO → full recompute)...")
+    t0 = time.perf_counter()
+    controller.continuos_reasoning()
+    t_init = time.perf_counter() - t0
+    print(f"    Init done in {t_init:.4f}s")
+
+    # --- [STEP 2] Perturbation ---
+    print(f"[3] Applying perturbation ({pct_links*100:.0f}% of router-router links)...")
     tester = Test(controller)
-    
-    print("[2] Inizializzazione path...")
-    start = time.time()
-    tester.sdn_controller.continuos_reasoning()
-    tester.sdn_controller.kb.get_routings()
-    
-    end = time.time()
-    
-    nocr_time = end - start
-    
-    print(f"[3] Esecuzione perturbazione ({p_guasto*100}% di guasto)...")
-    tester.perturbation(p_guasto)
+    n_modified = tester.perturbation(pct_links)
 
-    print("[4] Ricalcolo percorsi (Continuous Reasoning)...")
-    start = time.time()
-    _, flussi_ko = tester.sdn_controller.continuos_reasoning()
-    end = time.time()
+    # --- [STEP 3] CR: only re-route KO flows (continuous reasoning) ---
+    print("[4] Continuous Reasoning step...")
+    t0 = time.perf_counter()
+    _, n_ko = controller.continuos_reasoning()
+    t_cr = time.perf_counter() - t0
+    print(f"    CR done in {t_cr:.4f}s  |  KO flows rerouted: {n_ko}")
 
-    cr_time = end - start
+    # --- [STEP 4] Full Recompute: route ALL flows from scratch on perturbed network ---
+    print("[5] Full Recompute step (all flows reset to KO)...")
+    t0 = time.perf_counter()
+    _, n_full_ko = controller.full_recompute()
+    t_full = time.perf_counter() - t0
+    print(f"    Full Recompute done in {t_full:.4f}s  |  flows rerouted: {n_full_ko}")
 
-    num_edges = len(tester.sdn_controller.network.graph.edge_list())
-    num_nodes = len(tester.sdn_controller.network.graph.node_indices())
-    num_flows = len(tester.sdn_controller.config.flows)
+    speedup = t_full / t_cr if t_cr > 0 else float('inf')
+    pkt_ko = n_ko / num_flows if num_flows > 0 else 0.0
+    pr = n_ko / num_flows if num_flows > 0 else 0.0
 
-    print(f"\n✅ Test completato. Tempo non CR: {nocr_time:.4f} secondi | Tempo CR: {cr_time:.4f} secondi")
-    print(f"📊 Nodi: {num_nodes} | Archi rimanenti: {num_edges} | Flussi totali: {num_flows} | Flussi KO riallocati: {flussi_ko}")
-    print(f"RESULTDATA:{num_edges},{num_nodes},{num_flows},{cr_time:.4f},{nocr_time:.4f},{flussi_ko}")
+    print(f"\n✅ Results:")
+    print(f"   T_CR={t_cr:.6f}s  T_FULL={t_full:.6f}s  Speedup={speedup:.2f}x")
+    print(f"   N_KO={n_ko}  P_KO={pkt_ko:.3f}  P_R={pr:.3f}")
+    print(f"RESULTDATA:{num_edges},{num_nodes},{num_flows},{t_cr:.6f},{t_full:.6f},{n_ko},{n_full_ko},{n_modified}")
 
-    return (num_edges, num_nodes, num_flows, cr_time, nocr_time, flussi_ko)
-        
+    return (num_edges, num_nodes, num_flows, t_cr, t_full, n_ko, n_full_ko, n_modified)
+
+
 if __name__ == "__main__":
     main()

@@ -41,7 +41,7 @@ class PhysicalNetwork:
                 raise PhysicalNetworkError(f"Link {l.src} -> {l.dst} cannot connect a node to itself")
             if self.graph.has_edge(idx1, idx2):
                 raise PhysicalNetworkError(f"Duplicate link between {l.src} and {l.dst}")
-            self.graph.add_edge(idx1, idx2, {"bw": l.bw, "length": l.length})
+            self.graph.add_edge(idx1, idx2, {"bw": l.bw, "bw_nominal": l.bw_nominal, "length": l.length, "u": l.src, "v": l.dst})
 
     def pruning_per_bandwith(self, requireBandwidth: float) -> rx.PyGraph:
         """Returns a new graph by eliminating links with insufficient bandwidth. Complexity: O(E) where E is the number of edges."""

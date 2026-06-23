@@ -27,6 +27,7 @@ class Link:
     src: str
     dst: str
     bw: float
+    bw_nominal: float
     length: float
 
 @dataclass

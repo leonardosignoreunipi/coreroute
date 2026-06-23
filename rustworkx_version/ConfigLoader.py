@@ -27,7 +27,7 @@ class TopologyConfig:
         try:
             self.hosts    = [Host(**h)          for h in raw["hosts"]]
             self.routers  = [Router(**r)        for r in raw["routers"]]
-            self.links    = [Link(**l)          for l in raw["links"]]
+            self.links    = [Link(bw_nominal=l.get("bw_nominal", l["bw"]), **{k: v for k, v in l.items() if k != "bw_nominal"}) for l in raw["links"]]
             self.routings = [Routing(**r)       for r in raw["routings"]]
             self.flows    = {f["id"]: Flow(**f) for f in raw["flows"]}
             self.paths    = {p["id"]: Path(**p) for p in raw["paths"]}         

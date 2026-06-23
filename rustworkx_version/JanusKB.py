@@ -18,6 +18,16 @@ class JanusKB:
         self.config = config
         self.prolog_kb_path = prolog_kb_path
 
+    def clear_kb(self):
+        """Remove all dynamic facts from the Prolog runtime.
+        Must be called between trials that share the same OS process (e.g. Ray workers)."""
+        try:
+            for pred in ["host/2", "router/2", "link/4", "path/4", "flow/5",
+                         "routing/2", "pathsCandidates/2", "speedOfLight/1", "pcktSize/2"]:
+                j.query_once(f"retractall({pred})")
+        except Exception as e:
+            logger.warning(f"clear_kb warning: {e}")
+
     def initialize_kb(self):
         try:
             j.consult(self.prolog_kb_path)
@@ -151,6 +161,28 @@ class JanusKB:
         except Exception as e:
             logger.error(f"Error putting routing: {e}")
             raise JanusKBError(f"Error putting routing: {e}")
+
+    def reset_all_routings(self):
+        """Reset all flows to KO by clearing every routing and path, then restoring
+        initial empty-path entries.  After this call, get_partition() returns all
+        flows as ko_flows (as if the network had never been routed)."""
+        try:
+            j.query_once("retractall(routing(_, _))")
+            j.query_once("retractall(path(_, _, _, _))")
+            j.query_once("retractall(pathsCandidates(_, _))")
+            for f in self.config.flows.values():
+                init_path_id = f"p_{f.id}_init"
+                j.query_once(
+                    "assertz(path(PathId, Src, Dst, []))",
+                    {"PathId": init_path_id, "Src": str(f.src_service), "Dst": str(f.dst_service)}
+                )
+                j.query_once(
+                    "assertz(routing(FlowId, PathId))",
+                    {"FlowId": str(f.id), "PathId": init_path_id}
+                )
+        except Exception as e:
+            logger.error(f"Error resetting routings: {e}")
+            raise JanusKBError(f"Error resetting routings: {e}")
 
     def print_prolog_facts(self):
         print("\n=== KNOWLEDGE BASE ===")

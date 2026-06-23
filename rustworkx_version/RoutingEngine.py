@@ -1,48 +1,12 @@
 import PhysicalNetwork
 import JanusKB
 import ConfigLoader
-import heapq
 import random
 import logging
+from collections import deque
+import rustworkx as rx
 
 logger = logging.getLogger(__name__)
-
-def _priority_path_search(graph, source, target, old_edges, cutoff):
-    """
-    Yields (cost, path) for simple paths from source to target in strictly
-    non-decreasing cost order.
-
-    Edge costs: -1 if the edge belongs to old_edges (reused), +1 if new.
-    Negative weights are safe because visited tracking prevents cycles — a
-    simple path never revisits a node, so negative cycles are unreachable.
-
-    Ordering guarantee (same logic as Dijkstra): a complete path is yielded
-    only when popped from the heap. At that point every other entry in the
-    heap has cost >= the one just popped, so no cheaper complete path can
-    still be pending.
-    """
-    counter = 0
-    heap = [(0, counter, (source,), {source})]
-
-    while heap:
-        cost, _, path_t, visited = heapq.heappop(heap)
-        node = path_t[-1]
-
-        if node == target:
-            yield (cost, list(path_t))
-            continue
-
-        for neighbor in graph.neighbors(node):
-            if neighbor in visited:
-                continue
-            edge_cost = -1 if (node, neighbor) in old_edges or (neighbor, node) in old_edges else 1
-            new_cost = cost + edge_cost
-            new_path = path_t + (neighbor,)
-            # Push complete paths (target reached) unconditionally;
-            # push partial paths only if still within the depth limit.
-            if neighbor == target or len(new_path) < cutoff:
-                counter += 1
-                heapq.heappush(heap, (new_cost, counter, new_path, visited | {neighbor}))
 
 class RoutingEngineError(Exception):
     """Custom exception for RoutingEngine-related errors."""
@@ -63,12 +27,17 @@ class RoutingEngine:
     def diff_score(self, old_path, new_path):
         """
         Calcola la differenza simmetrica tra il vecchio e il nuovo path
-        Se il vecchio path non esiste, restituisce 0
+        Se il vecchio path non esiste, restituisce 0 
         """
         if old_path == []: 
             return 0
-        set_old_path = set((u, v) for u, v in zip(old_path[:-1], old_path[1:]))
-        set_new_path = set((u, v) for u, v in zip(new_path[:-1], new_path[1:]))
+        try:
+            set_old_path = set((u, v) for u, v in zip(old_path[:-1], old_path[1:]))
+            set_new_path = set((u, v) for u, v in zip(new_path[:-1], new_path[1:]))
+
+        except Exception as e:
+            logger.error(f"Error calculating diff score for old_path: {old_path}, new_path: {new_path}. Exception: {e}")
+            raise RoutingEngineError(f"Error calculating diff score for old_path: {old_path}, new_path: {new_path}. Exception: {e}")
 
         return len(set_old_path.symmetric_difference(set_new_path))
 
@@ -132,16 +101,15 @@ class RoutingEngine:
             else:
                 src = self.network.node_map[old_path[0]] #map nodes stringId to int
                 dst = self.network.node_map[old_path[-1]] #map nodes stringId to int
-            
-
-            graph_pruned = self.network.pruning_per_bandwith(self.config.flows[flowId].required_bw(self.config.pckt_size))
-            candidates = self.search_candidates(graph_pruned, src, dst, flowId, old_path)
+                
+            required_bw = self.config.flows[flowId].required_bw(self.config.pckt_size)
+            graph_pruned = self.network.pruning_per_bandwith(required_bw)
+            candidates = self.search_candidates(graph_pruned, src, dst, flowId, old_path, required_bw)
             
             if len(candidates) == 0:
                 logger.warning(f"Not valid paths for flow: {flowId}")
             pathsIds = []
 
-            # candidates è già ordinata per diff_score (prodotta da _priority_path_search)
             for index, (_, nodes) in enumerate(candidates):
                 pathId = f"{flowId}_{index + 1}"
                 pathsIds.append(pathId)
@@ -151,35 +119,72 @@ class RoutingEngine:
             
         return self.kb.query_cr_routings(ko_flows, ok_flows)
 
+    
+    def search_candidates(self, graph_pruned, src, dst, flow_id, old_path=None, required_bw=None):
+        import numpy as np
 
-    def search_candidates(self, graph_pruned, src, dst, flow_id, old_path=None):
-        """
-        Trova i candidati tra src e dst usando una ricerca a coda di priorità
-        con costi {-1 riuso vecchio arco, +1 arco nuovo}. I path vengono prodotti
-        già in ordine crescente di diff_score — nessun heap di post-ordinamento.
-        """
-        MAX_CUTOFF = 8
-        MAX_ENUM   = 20
+        MAX_ENUM = 20
 
-        # Converti old_path (string IDs) in un insieme di coppie di indici interi
-        old_edges: set[tuple[int, int]] = set()
-        if old_path and len(old_path) > 1:
-            for u, v in zip(old_path[:-1], old_path[1:]):
-                u_idx = self.network.node_map.get(u)
-                v_idx = self.network.node_map.get(v)
-                if u_idx is not None and v_idx is not None:
-                    old_edges.add((u_idx, v_idx))
+        if graph_pruned is None or src is None or dst is None or flow_id is None or required_bw is None:
+            logger.error("Invalid input to search_candidates: graph_pruned, src, dst, flow_id, and required_bw must not be None.")
+            raise RoutingEngineError("Invalid input to search_candidates: graph_pruned, src, dst, flow_id, and required_bw must not be None.")
 
-        candidates = []
-        for cost, path_idx in _priority_path_search(graph_pruned, src, dst, old_edges, MAX_CUTOFF):
-            if len(candidates) >= MAX_ENUM:
-                break
+        old_path_edges = set(zip(old_path[:-1], old_path[1:])) if old_path else set()
+        edge_penalties = {}
+
+        def weight_fn(edge_data):
             try:
-                path = [self.network.inv_node_map[idx] for idx in path_idx]
-            except KeyError as e:
-                logger.error(f"Error mapping node indices to IDs: {e}")
-                continue
-            candidates.append((cost, path))
+                if edge_data['bw'] < required_bw:
+                    return float('inf')
+            except KeyError:
+                logger.error("Link without bw field")
+                raise RoutingEngineError("Link without bw field")
 
-        logger.info(f"search_candidates: flow={flow_id} enumerated={len(candidates)} paths")
+            u_str = edge_data["u"]
+            v_str = edge_data["v"]
+            u = self.network.node_map[u_str]
+            v = self.network.node_map[v_str]
+
+            if (u_str, v_str) in old_path_edges or (v_str, u_str) in old_path_edges:
+                base_cost = 0.1
+            else:
+                base_cost = 1.0
+
+            node_data = self.network.graph.get_node_data(v)
+            penalty = edge_penalties.get((u, v), 0.0) + edge_penalties.get((v, u), 0.0)
+            qtime = node_data["qtime"] if node_data["type"] == "Router" else 0
+
+            return base_cost + qtime / 1000 + penalty
+
+        visited_paths = set()
+        candidates = []
+
+        for _ in range(MAX_ENUM):
+            try:
+                result = rx.dijkstra_shortest_paths(graph_pruned, src, dst, weight_fn=weight_fn)
+                if dst not in result:
+                    break
+                path_idx = result[dst]
+                path = [self.network.inv_node_map[n] for n in path_idx]
+                path_edges_str = frozenset(zip(path[:-1], path[1:]))
+                path_edges_int = list(zip(path_idx[:-1], path_idx[1:]))
+
+                if path_edges_str in visited_paths:
+                    for (u, v) in path_edges_int:
+                        edge_penalties[(u, v)] = edge_penalties.get((u, v), 0.0) + 10.0
+                    continue
+
+                visited_paths.add(path_edges_str)
+                for (u, v) in path_edges_int:
+                    edge_penalties[(u, v)] = edge_penalties.get((u, v), 0.0) + 2.0
+
+                score = self.diff_score(old_path, path) if old_path else 0
+                candidates.append((score, path))
+
+            except Exception as e:
+                logger.error(f"Dijkstra error {e}")
+                raise RoutingEngineError(f"Dijkstra error {e}")
+
+        candidates.sort(key=lambda x: x[0])
+        logger.info(f"search_candidates: flow={flow_id} candidates_length={len(candidates)} paths")
         return candidates

@@ -8,8 +8,8 @@ class GeneraTopologieError(Exception):
     """Custom exception for errors in topology generation."""
     pass
 
-RANGE_ROUTERS = [32, 128, 512, 1024] 
-RANGE_FLOWS = [5, 10, 50, 100, 150, 200]
+RANGE_ROUTERS = [64, 128, 512, 1024, 2048] 
+RANGE_FLOWS = [500]
 GRAPHS_TYPE = ["er", "ba", "iaag"]
 
 def estimated_edges(gtype, RANGE_ROUTERS):
