@@ -136,7 +136,7 @@ def run_trial(config: dict) -> dict:
 if __name__ == "__main__":
     os.environ["RAY_local_fs_capacity_threshold"] = "0.99" #toglie il warning sullo spazio in /tmp/ray/seession
     RESULTS_DIR.mkdir(exist_ok=True)
-    NUM_WORKERS = 2
+    NUM_WORKERS = 4
     ray.init(num_cpus=NUM_WORKERS)
 
     all_configs = [

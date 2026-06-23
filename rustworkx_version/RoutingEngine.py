@@ -121,9 +121,8 @@ class RoutingEngine:
 
     
     def search_candidates(self, graph_pruned, src, dst, flow_id, old_path=None, required_bw=None):
-        import numpy as np
 
-        MAX_ENUM = 20
+        MAX_CANDIDATES = 7
 
         if graph_pruned is None or src is None or dst is None or flow_id is None or required_bw is None:
             logger.error("Invalid input to search_candidates: graph_pruned, src, dst, flow_id, and required_bw must not be None.")
@@ -159,7 +158,7 @@ class RoutingEngine:
         visited_paths = set()
         candidates = []
 
-        for _ in range(MAX_ENUM):
+        for _ in range(MAX_CANDIDATES):
             try:
                 result = rx.dijkstra_shortest_paths(graph_pruned, src, dst, weight_fn=weight_fn)
                 if dst not in result:
