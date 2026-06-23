@@ -2,6 +2,7 @@ from ConfigLoader import ConfigLoader
 from PhysicalNetwork import PhysicalNetwork as Net
 from RoutingEngine import RoutingEngine as Engine
 from JanusKB import JanusKB as PrologKB
+from models import Routing
 import sys
 class SDNcontroller:
     def __init__(self, network: Net, kb: PrologKB, config: ConfigLoader, engine: Engine):
@@ -46,7 +47,7 @@ class SDNcontroller:
         new_valid_routings = self.engine.cr_routing(ok_flows, ko_flows)
         self.kb.update_janus_kb(new_valid_routings)
         
-        temp_ok_flows, temp_ko_flows = self.engine.get_partition()
+        #temp_ok_flows, temp_ko_flows = self.engine.get_partition()
         #print(f"[*] New valid routings: "f"{len(new_valid_routings)}. Nuova partition: {len(temp_ok_flows)} ok_flows, {len(temp_ko_flows)} ko_flows.")
 
         return new_valid_routings, len(ko_flows)
@@ -57,7 +58,8 @@ class SDNcontroller:
         Treats every flow as KO regardless of its current routing.
         Returns (new_valid_routings, n_rerouted)."""
         self.kb.reset_all_routings()
-        _, ko_flows = self.engine.get_partition() #TODO: controllo che siano effettivamente tutti
+        ko_flows = [Routing(flow_id=str(f.id), path_id=f"p_{f.id}_init")
+            for f in self.config.flows.values()]
         new_valid_routings = self.engine.cr_routing([], ko_flows)
         self.kb.update_janus_kb(new_valid_routings)
         return new_valid_routings, len(ko_flows)
