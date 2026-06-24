@@ -23,7 +23,8 @@ class RoutingEngine:
         self.network = network
         self.kb = kb
         self.config = config
-    
+        self._cr_call_id = 0
+
     def diff_score(self, old_path, new_path):
         """
         Calcola la differenza simmetrica tra il vecchio e il nuovo path
@@ -83,35 +84,38 @@ class RoutingEngine:
         if len(ko_flows) == 0:
             logger.info("Nessun KoFlow trovato!")
             return ok_flows
-        
+
+        self._cr_call_id += 1
+        call_id = self._cr_call_id
+
         flowsNodes = {r.flow_id: self.kb.get_path(r.path_id) for r in ko_flows}
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
         temp_koflows = list(ko_flows)
-        
+
         while len(temp_koflows) > 0:
             routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
             flowId = routing.flow_id
-            
+
             old_path = flowsNodes[flowId]
 
             if old_path == []:
                 src, dst = self.get_valid_src_dst(flowId)
                 src = self.network.node_map[src] #map nodes stringId to int
-                dst = self.network.node_map[dst] #map nodes stringId to int 
+                dst = self.network.node_map[dst] #map nodes stringId to int
             else:
                 src = self.network.node_map[old_path[0]] #map nodes stringId to int
                 dst = self.network.node_map[old_path[-1]] #map nodes stringId to int
-                
+
             required_bw = self.config.flows[flowId].required_bw(self.config.pckt_size)
             graph_pruned = self.network.pruning_per_bandwith(required_bw)
             candidates = self.search_candidates(graph_pruned, src, dst, flowId, old_path, required_bw)
-            
+
             if len(candidates) == 0:
                 logger.warning(f"Not valid paths for flow: {flowId}")
             pathsIds = []
 
             for index, (_, nodes) in enumerate(candidates):
-                pathId = f"{flowId}_{index + 1}"
+                pathId = f"{flowId}_c{call_id}_{index + 1}"
                 pathsIds.append(pathId)
                 self.kb.put_path(pathId, nodes[0], nodes[-1], nodes)
             
