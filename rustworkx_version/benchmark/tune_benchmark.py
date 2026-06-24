@@ -7,8 +7,8 @@ Batch structure: per ogni (topology, n, flow_factor, seed) viene eseguito
 un solo init, poi tutti i PCT_MODS in sequenza con restore dello stato
 post-init tra una perturbazione e l'altra.
 
-Total batches: 3 × 4 × 4 × 1 = 48   (con 1 seed)
-Total trials:  3 × 4 × 4 × 4 × 1 = 192
+Total batches: 3 × 4 × 4 × 10 = 480
+Total trials:  3 × 4 × 4 × 4 × 10 = 1920
 """
 
 import os
@@ -121,7 +121,7 @@ def run_trial_batch(config_base: dict) -> list:
 
                 # [CR] solo i flussi KO vengono re-instradati
                 t0 = time.perf_counter()
-                _, n_ko = ctrl.continuos_reasoning()
+                _, n_ko, n_r = ctrl.continuos_reasoning()
                 t_cr = time.perf_counter() - t0
 
                 # [FULL] tutti i flussi vengono re-instradati da zero
@@ -139,9 +139,9 @@ def run_trial_batch(config_base: dict) -> list:
                     "T_CR":        t_cr,
                     "T_FULL":      t_full,
                     "N_KO":        n_ko,
-                    "N_R":         n_ko,
+                    "N_R":         n_r,
                     "P_KO":        n_ko / num_flows if num_flows > 0 else 0.0,
-                    "P_R":         n_ko / num_flows if num_flows > 0 else 0.0,
+                    "P_R":         n_r / num_flows if num_flows > 0 else 0.0,
                     "Speedup":     speedup,
                     "n_links_mod": len(selected),
                     "ok":          True,
@@ -183,7 +183,7 @@ def run_trial_batch(config_base: dict) -> list:
 if __name__ == "__main__":
     os.environ["RAY_local_fs_capacity_threshold"] = "0.99"
     RESULTS_DIR.mkdir(exist_ok=True)
-    NUM_WORKERS = 4
+    NUM_WORKERS = 3
     ray.init(num_cpus=NUM_WORKERS)
 
     # 48 batch: niente pct_mod nel prodotto cartesiano
@@ -204,7 +204,7 @@ if __name__ == "__main__":
     results      = []
     done_trials  = 0
     done_batches = 0
-    csv_out = RESULTS_DIR / "benchmark_cr.csv"
+    csv_out = RESULTS_DIR / "benchmark_cr_er_p04.csv"
 
     while active:
         ready, active = ray.wait(active, num_returns=1)

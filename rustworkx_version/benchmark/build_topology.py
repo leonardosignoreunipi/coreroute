@@ -18,25 +18,31 @@ def generate_sdn_topology(graph_type=None, num_routers=None, num_hosts=None, num
         random.seed(seed)
 
     logger.info(f"Generating {graph_type} topology with {num_routers} routers...")
-
+    
     if graph_type == "ba":
         m = max(1, int(math.log2(num_routers)))
         core_graph = rx.barabasi_albert_graph(num_routers, m, seed=seed)
+        attemp = 1
         while not rx.is_connected(core_graph):
-            core_graph = rx.barabasi_albert_graph(num_routers, m)
+            core_graph = rx.barabasi_albert_graph(num_routers, m, seed=seed+attemp)
+            attemp += 1
     elif graph_type == "er":
-        p_er = 6 / (num_routers - 1)
+        p_er = 0.4
         core_graph = rx.undirected_gnp_random_graph(num_routers, p_er, seed=seed)
+        attemp = 1
         while not rx.is_connected(core_graph):
-            core_graph = rx.undirected_gnp_random_graph(num_routers, p_er)
+            core_graph = rx.undirected_gnp_random_graph(num_routers, p_er, seed=seed+attemp)
+            attemp += 1
     elif graph_type == "iaag":
         try:
             import networkx as nx
         except ImportError:
             raise GenerateTopologyError("networkx is required for 'iaag'. Install with: pip install networkx")
         G_nx = nx.powerlaw_cluster_graph(num_routers, m=3, p=0.1, seed=seed)
+        attemp = 1
         while not nx.is_connected(G_nx):
-            G_nx = nx.powerlaw_cluster_graph(num_routers, m=3, p=0.1)
+            G_nx = nx.powerlaw_cluster_graph(num_routers, m=3, p=0.1, seed=attemp)
+            attemp += 1
         core_graph = rx.PyGraph()
         nx_to_rx = {}
         for node in sorted(G_nx.nodes()):
@@ -70,8 +76,8 @@ def generate_sdn_topology(graph_type=None, num_routers=None, num_hosts=None, num
         src_id = idx_to_id[u]
         dst_id = idx_to_id[v]
         if src_id.startswith('h') or dst_id.startswith('h'):
-            bw = 10000.0
-            bw_nominal = 10000.0
+            bw = 50000.0
+            bw_nominal = 50000.0
             length = 1.0
         else:
             bw_nominal = float(random.uniform(100.0, 1000.0))

@@ -93,9 +93,9 @@ def main():
     # --- [STEP 3] CR: only re-route KO flows (continuous reasoning) ---
     print("[4] Continuous Reasoning step...")
     t0 = time.perf_counter()
-    _, n_ko = controller.continuos_reasoning()
+    _, n_ko, n_r = controller.continuos_reasoning()
     t_cr = time.perf_counter() - t0
-    print(f"    CR done in {t_cr:.4f}s  |  KO flows rerouted: {n_ko}")
+    print(f"    CR done in {t_cr:.4f}s  |  KO flows: {n_ko}  |  rerouted: {n_r}")
 
     # --- [STEP 4] Full Recompute: route ALL flows from scratch on perturbed network ---
     print("[5] Full Recompute step (all flows reset to KO)...")
@@ -106,11 +106,11 @@ def main():
 
     speedup = t_full / t_cr if t_cr > 0 else float('inf')
     pkt_ko = n_ko / num_flows if num_flows > 0 else 0.0
-    pr = n_ko / num_flows if num_flows > 0 else 0.0
+    pr = n_r / num_flows if num_flows > 0 else 0.0
 
     print(f"\n✅ Results:")
     print(f"   T_CR={t_cr:.6f}s  T_FULL={t_full:.6f}s  Speedup={speedup:.2f}x")
-    print(f"   N_KO={n_ko}  P_KO={pkt_ko:.3f}  P_R={pr:.3f}")
+    print(f"   N_KO={n_ko}  N_R={n_r}  P_KO={pkt_ko:.3f}  P_R={pr:.3f}")
     print(f"RESULTDATA:{num_edges},{num_nodes},{num_flows},{t_cr:.6f},{t_full:.6f},{n_ko},{n_full_ko},{n_modified}")
 
     return (num_edges, num_nodes, num_flows, t_cr, t_full, n_ko, n_full_ko, n_modified)

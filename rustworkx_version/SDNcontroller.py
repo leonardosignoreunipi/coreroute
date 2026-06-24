@@ -51,11 +51,16 @@ class SDNcontroller:
         except Exception as e:
             logger.error(f"Partition query failed: {e}")
             raise SDNcontrollerError(f"Partition query failed: {e}")
-            
+
+        ko_old_paths = {r.flow_id: r.path_id for r in ko_flows}
         new_valid_routings = self.engine.cr_routing(ok_flows, ko_flows)
         self.kb.update_janus_kb(new_valid_routings)
-        
-        return new_valid_routings, len(ko_flows)
+
+        n_rerouted = sum(
+            1 for r in new_valid_routings
+            if r.flow_id in ko_old_paths and r.path_id != ko_old_paths[r.flow_id]
+        )
+        return new_valid_routings, len(ko_flows), n_rerouted
         
 
     def full_recompute(self):
