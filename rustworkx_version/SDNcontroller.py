@@ -4,6 +4,13 @@ from RoutingEngine import RoutingEngine as Engine
 from JanusKB import JanusKB as PrologKB
 from models import Routing
 import sys
+import logging
+
+logger = logging.getLogger(__name__)
+
+class SDNcontrollerError(Exception):
+    """"Custom SDNcontrollerError"""
+    pass
 class SDNcontroller:
     def __init__(self, network: Net, kb: PrologKB, config: ConfigLoader, engine: Engine):
         self.network = network
@@ -37,19 +44,17 @@ class SDNcontroller:
         1) okflows, koflows partition
         2) newvalidroutings from okflows, koflows
         3) update janus kb
-        4) misuro quanti routing validi ottengo
-        return newvalidroutings
+        Returns (new_valid_routings, n_ko_flows).
         """
-        ok_flows, ko_flows = [], []
-        ok_flows, ko_flows = self.engine.get_partition()
-        #print(f"\n[*] Partition ottenuta: {len(ok_flows)} ok_flows, {len(ko_flows)} ko_flows.")
-
+        try:
+            ok_flows, ko_flows = self.engine.get_partition()
+        except Exception as e:
+            logger.error(f"Partition query failed: {e}")
+            raise SDNcontrollerError(f"Partition query failed: {e}")
+            
         new_valid_routings = self.engine.cr_routing(ok_flows, ko_flows)
         self.kb.update_janus_kb(new_valid_routings)
         
-        #temp_ok_flows, temp_ko_flows = self.engine.get_partition()
-        #print(f"[*] New valid routings: "f"{len(new_valid_routings)}. Nuova partition: {len(temp_ok_flows)} ok_flows, {len(temp_ko_flows)} ko_flows.")
-
         return new_valid_routings, len(ko_flows)
         
 

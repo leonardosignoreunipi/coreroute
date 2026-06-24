@@ -184,6 +184,35 @@ class JanusKB:
             logger.error(f"Error resetting routings: {e}")
             raise JanusKBError(f"Error resetting routings: {e}")
 
+    def snapshot_kb_state(self) -> dict:
+        """Salva lo stato corrente di routing e path dalla KB Prolog.
+        Usato per preservare lo stato post-init e ripristinarlo tra perturbazioni diverse."""
+        try:
+            routings = list(j.query("routing(FlowId, PathId)"))
+            paths    = list(j.query("path(PathId, Src, Dst, Nodes)"))
+            return {"routings": routings, "paths": paths}
+        except Exception as e:
+            logger.error(f"Snapshot KB failed: {e}")
+            raise JanusKBError(f"Snapshot KB failed: {e}")
+
+    def restore_kb_state(self, snapshot: dict):
+        """Ripristina routing e path dalla snapshot (es. stato post-init).
+        Cancella lo stato corrente e riasserisce quello salvato."""
+        try:
+            j.query_once("retractall(routing(_, _))")
+            j.query_once("retractall(path(_, _, _, _))")
+            j.query_once("retractall(pathsCandidates(_, _))")
+            for r in snapshot["routings"]:
+                j.query_once("assertz(routing(FlowId, PathId))",
+                             {"FlowId": r["FlowId"], "PathId": r["PathId"]})
+            for p in snapshot["paths"]:
+                j.query_once("assertz(path(PathId, Src, Dst, Nodes))",
+                             {"PathId": p["PathId"], "Src": p["Src"],
+                              "Dst": p["Dst"], "Nodes": p["Nodes"]})
+        except Exception as e:
+            logger.error(f"Restore KB failed: {e}")
+            raise JanusKBError(f"Restore KB failed: {e}")
+
     def print_prolog_facts(self):
         print("\n=== KNOWLEDGE BASE ===")
         
