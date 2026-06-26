@@ -25,7 +25,7 @@ class RoutingEngine:
         self.config = config
         self._cr_call_id = 0
 
-    def diff_score(self, old_path, new_path):
+    def diff_score(self, old_path: list[str], new_path: list[str]):
         """
         Calcola la differenza simmetrica tra il vecchio e il nuovo path
         Se il vecchio path non esiste, restituisce 0 
@@ -83,7 +83,7 @@ class RoutingEngine:
         
         if len(ko_flows) == 0:
             logger.info("Nessun KoFlow trovato!")
-            return ok_flows
+            return ok_flows, []
 
         self._cr_call_id += 1
         call_id = self._cr_call_id
@@ -124,7 +124,7 @@ class RoutingEngine:
         return self.kb.query_cr_routings(ko_flows, ok_flows)
 
     
-    def search_candidates(self, graph_pruned, src, dst, flow_id, old_path=None, required_bw=None):
+    def search_candidates(self, graph_pruned, src, dst, flow_id, old_path_str=None, required_bw=None):
 
         MAX_CANDIDATES = 7
 
@@ -132,7 +132,7 @@ class RoutingEngine:
             logger.error("Invalid input to search_candidates: graph_pruned, src, dst, flow_id, and required_bw must not be None.")
             raise RoutingEngineError("Invalid input to search_candidates: graph_pruned, src, dst, flow_id, and required_bw must not be None.")
 
-        old_path_edges = set(zip(old_path[:-1], old_path[1:])) if old_path else set()
+        old_path_edges = set(zip(old_path_str[:-1], old_path_str[1:])) if old_path_str else set()
         edge_penalties = {}
 
         def weight_fn(edge_data):
@@ -152,27 +152,32 @@ class RoutingEngine:
                 base_cost = 0.1
             else:
                 base_cost = 1.0
+                
+            penalty = edge_penalties.get((u, v), 0.0)
 
-            node_data = self.network.graph.get_node_data(v)
-            penalty = edge_penalties.get((u, v), 0.0) + edge_penalties.get((v, u), 0.0)
-            qtime = node_data["qtime"] if node_data["type"] == "Router" else 0
-
-            return base_cost + qtime / 1000 + penalty
+            return base_cost + penalty
 
         visited_paths = set()
         candidates = []
+        index = 0
+        stall_count = 0
+        MAX_STALLS = MAX_CANDIDATES * 2
 
-        for _ in range(MAX_CANDIDATES):
+        while index < MAX_CANDIDATES and stall_count < MAX_STALLS:
             try:
-                result = rx.dijkstra_shortest_paths(graph_pruned, src, dst, weight_fn=weight_fn)
-                if dst not in result:
+                res = rx.dijkstra_shortest_paths(graph_pruned, src, dst, weight_fn=weight_fn)
+                if dst not in res:
+                    """path not found"""
                     break
-                path_idx = result[dst]
-                path = [self.network.inv_node_map[n] for n in path_idx]
-                path_edges_str = frozenset(zip(path[:-1], path[1:]))
+
+                path_idx = res[dst]
+                path_str = [self.network.inv_node_map[n] for n in path_idx]
+
+                path_edges_str = tuple(zip(path_str[:-1], path_str[1:])) #uso tuple per rendere il path immutabile così può essere aggiunto al set
                 path_edges_int = list(zip(path_idx[:-1], path_idx[1:]))
 
                 if path_edges_str in visited_paths:
+                    stall_count += 1
                     for (u, v) in path_edges_int:
                         edge_penalties[(u, v)] = edge_penalties.get((u, v), 0.0) + 10.0
                     continue
@@ -181,8 +186,9 @@ class RoutingEngine:
                 for (u, v) in path_edges_int:
                     edge_penalties[(u, v)] = edge_penalties.get((u, v), 0.0) + 2.0
 
-                score = self.diff_score(old_path, path) if old_path else 0
-                candidates.append((score, path))
+                score = self.diff_score(old_path_str, path_str) if old_path_str else 0
+                candidates.append((score, path_str))
+                index += 1
 
             except Exception as e:
                 logger.error(f"Dijkstra error {e}")

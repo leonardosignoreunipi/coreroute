@@ -27,7 +27,7 @@ def generate_sdn_topology(graph_type=None, num_routers=None, num_hosts=None, num
             core_graph = rx.barabasi_albert_graph(num_routers, m, seed=seed+attemp)
             attemp += 1
     elif graph_type == "er":
-        p_er = 0.4
+        p_er = math.log2(num_routers) / num_routers
         core_graph = rx.undirected_gnp_random_graph(num_routers, p_er, seed=seed)
         attemp = 1
         while not rx.is_connected(core_graph):
@@ -38,10 +38,10 @@ def generate_sdn_topology(graph_type=None, num_routers=None, num_hosts=None, num
             import networkx as nx
         except ImportError:
             raise GenerateTopologyError("networkx is required for 'iaag'. Install with: pip install networkx")
-        G_nx = nx.powerlaw_cluster_graph(num_routers, m=3, p=0.1, seed=seed)
+        G_nx = nx.random_internet_as_graph(num_routers, seed=seed)
         attemp = 1
         while not nx.is_connected(G_nx):
-            G_nx = nx.powerlaw_cluster_graph(num_routers, m=3, p=0.1, seed=attemp)
+            G_nx = nx.random_internet_as_graph(num_routers,seed=attemp)
             attemp += 1
         core_graph = rx.PyGraph()
         nx_to_rx = {}

@@ -91,7 +91,7 @@ class JanusKB:
             logger.error(f"Error during partitioning: {e}")
             raise JanusKBError(f"Error during partitioning: {e}")
     
-    def query_cr_routings(self, koflows: List[Routing],okflows: List[Routing] ) -> List[Routing]:
+    def query_cr_routings(self, koflows: List[Routing], okflows: List[Routing]) -> tuple[List[Routing], List[Routing]]:
         ko_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in koflows]
         ok_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in okflows]
 
@@ -99,18 +99,19 @@ class JanusKB:
         ok_list = f"[{', '.join(ok_terms)}]"
 
         query = f"""
-            crRouting({ko_list}, {ok_list}, _NewValidRoutingsTemp),
-            findall(_{{flowId: _F, pathId: _P}}, member(routing(_F, _P), _NewValidRoutingsTemp), NewValidRoutings).
+            crRouting({ko_list}, {ok_list}, _NewValidRoutingsTemp, _FailedTemp),
+            findall(_{{flowId: _F, pathId: _P}}, member(routing(_F, _P), _NewValidRoutingsTemp), NewValidRoutings),
+            findall(_{{flowId: _F, pathId: _P}}, member(routing(_F, _P), _FailedTemp), FailedRoutings).
         """
 
         try:
             result = j.query_once(query)
-            if result['NewValidRoutings']:
-                return [Routing(flow_id=d["flowId"], path_id=d["pathId"]) for d in result["NewValidRoutings"]]
-            else: return []
+            new_routings = [Routing(flow_id=d["flowId"], path_id=d["pathId"]) for d in result["NewValidRoutings"]]
+            failed_routings = [Routing(flow_id=d["flowId"], path_id=d["pathId"]) for d in result["FailedRoutings"]]
+            return new_routings, failed_routings
         except Exception as e:
             logger.error(f"Error in recalculation: {e}")
-            return []
+            return [], []
     
     def get_routings(self):
         query = "routing(FlowId, PathId), path(PathId, _, _, Nodes)"

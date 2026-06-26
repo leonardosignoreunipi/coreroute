@@ -126,7 +126,7 @@ def run_trial_batch(config_base: dict) -> list:
 
                 # [FULL] tutti i flussi vengono re-instradati da zero
                 t0 = time.perf_counter()
-                _, n_full_ko = ctrl.full_recompute()
+                _, n_full_ko, n_full_r = ctrl.full_recompute()
                 t_full = time.perf_counter() - t0
 
                 speedup = t_full / t_cr if t_cr > 0 else float("inf")
@@ -183,7 +183,7 @@ def run_trial_batch(config_base: dict) -> list:
 if __name__ == "__main__":
     os.environ["RAY_local_fs_capacity_threshold"] = "0.99"
     RESULTS_DIR.mkdir(exist_ok=True)
-    NUM_WORKERS = 3
+    NUM_WORKERS = 4
     ray.init(num_cpus=NUM_WORKERS)
 
     # 48 batch: niente pct_mod nel prodotto cartesiano

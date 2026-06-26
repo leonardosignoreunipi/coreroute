@@ -9,3 +9,4 @@ rustworkx_version/benchmark/topologies/
 rustworkx_version/benchmark/*.json
 rustworkx_version/benchmark/*.png
 .DS_Store
+*.log

@@ -19,12 +19,12 @@ partition(AllFlows, OkFlows, KoFlows) :-
     findall(routing(FlowId, PathId), (routing(FlowId,PathId),validPath(FlowId, PathId, AllFlows)), OkFlows), 
     subtract(AllFlows, OkFlows, KoFlows).
 
-crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings) :-
-    reRoute(FlowId, OldRoutings, NewValidPathId), 
-    crRouting(Tail, [routing(FlowId, NewValidPathId)|OldRoutings], NewRoutings).
- crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings) :-
-     crRouting(Tail, [routing(FlowId, PathId)|OldRoutings], NewRoutings).
-crRouting([], NewValidRoutings, NewValidRoutings).
+crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings, Failed) :-
+    reRoute(FlowId, OldRoutings, NewValidPathId),
+    crRouting(Tail, [routing(FlowId, NewValidPathId)|OldRoutings], NewRoutings, Failed).
+crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings, [routing(FlowId, PathId)|Failed]) :-
+    crRouting(Tail, OldRoutings, NewRoutings, Failed).
+crRouting([], NewValidRoutings, NewValidRoutings, []).
 
 reRoute(FlowId, Routings, NextPathId) :-
     nextCandidate(FlowId, NextPathId), 
