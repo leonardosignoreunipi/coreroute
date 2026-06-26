@@ -126,7 +126,7 @@ class RoutingEngine:
     
     def search_candidates(self, graph_pruned, src, dst, flow_id, old_path_str=None, required_bw=None):
 
-        MAX_CANDIDATES = 7
+        MAX_CANDIDATES = 10
 
         if graph_pruned is None or src is None or dst is None or flow_id is None or required_bw is None:
             logger.error("Invalid input to search_candidates: graph_pruned, src, dst, flow_id, and required_bw must not be None.")
@@ -152,8 +152,8 @@ class RoutingEngine:
                 base_cost = 0.1
             else:
                 base_cost = 1.0
-                
-            penalty = edge_penalties.get((u, v), 0.0)
+            
+            penalty = edge_penalties.get((u, v), 0.0) + edge_penalties.get((v, u), 0.0)
 
             return base_cost + penalty
 
