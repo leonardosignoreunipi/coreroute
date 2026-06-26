@@ -10,3 +10,5 @@ rustworkx_version/benchmark/*.json
 rustworkx_version/benchmark/*.png
 .DS_Store
 *.log
+plot_thesis.py
+plot_thesis_unfiltered.py
