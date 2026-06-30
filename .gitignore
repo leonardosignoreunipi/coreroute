@@ -8,7 +8,7 @@ rustworkx_version/benchmark/results/
 rustworkx_version/benchmark/topologies/
 rustworkx_version/benchmark/*.json
 rustworkx_version/benchmark/*.png
+rustworkx_version/benchmark/*.tex
+rustworkx_version/benchmark/*.pdf
 .DS_Store
 *.log
-plot_thesis.py
-plot_thesis_unfiltered.py
