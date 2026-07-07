@@ -44,12 +44,16 @@ import seaborn as sns
 
 sns.set_theme(style="whitegrid", context="talk")
 
+# Ordine delle topologie nei plot: iaag (pochi archi) -> er (medi) -> ba (molti)
+TOPOLOGY_ORDER = ["iaag", "er", "ba"]
+
 # Chiavi di raggruppamento e metriche da plottare
 GROUP_KEYS = ["topology", "pct_mod", "flow_factor", "num_nodes"]
 METRICS = [
     ("T_CR",    "Reasoning Time (s)", "reasoning_time"),
     ("N_R",     "Rerouted Flows",     "rerouted_flows"),
     ("Speedup", "Speedup",            "speedup"),
+    ("T_FULL",  "Full Reasoning Time (s)", "full_reasoning_time")
 ]
 
 
@@ -79,6 +83,7 @@ def lineplot(df, metric, ylabel, outfile):
         y=metric,
         hue="flow_factor",
         col="topology",
+        col_order=TOPOLOGY_ORDER,
         row="pct_mod",
         kind="line",
         marker="o",
@@ -106,6 +111,7 @@ def barplot(df, metric, ylabel, outfile):
         y=metric,
         hue="flow_factor",
         col="topology",
+        col_order=TOPOLOGY_ORDER,
         row="pct_mod",
         kind="bar",
         errorbar=("ci", 95),
@@ -126,11 +132,51 @@ def barplot(df, metric, ylabel, outfile):
     print(f"  scritto {outfile}")
 
 
+def reroute_success_plot(df, outfile):
+    """Tasso di successo del reinstradamento (N_R/N_KO) vs pct_mod, una linea per topologia.
+
+    Solo i trial con N_KO > 0 sono inclusi: dove non c'e' nessun flusso KO
+    il rapporto N_R/N_KO non e' definito.
+    """
+    sub = df[df["N_KO"] > 0].copy()
+    sub["reroute_rate"] = 100 * sub["N_R"] / sub["N_KO"]
+
+    fig, ax = plt.subplots(figsize=(8, 6))
+    sns.lineplot(
+        data=sub,
+        x="pct_mod",
+        y="reroute_rate",
+        hue="topology",
+        hue_order=TOPOLOGY_ORDER,
+        marker="o",
+        errorbar=("ci", 95),
+        palette="viridis",
+        ax=ax,
+    )
+    ax.set_xlabel("pct_mod")
+    ax.set_ylabel("Flussi reinstradati / Flussi KO (%)")
+    ax.set_ylim(0, 105)
+    ax.set_title("Tasso di successo del reinstradamento vs pct_mod")
+    ax.legend(title="topology")
+    fig.savefig(outfile, dpi=150, bbox_inches="tight")
+    plt.close(fig)
+    print(f"  scritto {outfile}")
+
+
 def main():
-    p = argparse.ArgumentParser(description="Aggrega e plotta benchmark_cr_severe.csv")
+    p = argparse.ArgumentParser(description="Aggrega e plotta benchmark_cr.csv")
     p.add_argument("--csv", default="results/benchmark_cr_severe.csv")
     p.add_argument("--outdir", default="./results")
+    p.add_argument(
+        "--suffix",
+        default=None,
+        help="Suffisso aggiunto ai nomi dei file di output (default: dedotto dal nome del csv)",
+    )
     args = p.parse_args()
+
+    suffix = args.suffix
+    if suffix is None:
+        suffix = "_severe" if "severe" in args.csv else ""
 
     df = pd.read_csv(args.csv)
 
@@ -141,8 +187,10 @@ def main():
 
     print("Genero i plot:")
     for metric, ylabel, tag in METRICS:
-        lineplot(df, metric, ylabel, f"{args.outdir}/line_{tag}_severe.png")
-        barplot(df, metric, ylabel, f"{args.outdir}/bar_{tag}_severe.png")
+        lineplot(df, metric, ylabel, f"{args.outdir}/line_{tag}{suffix}.png")
+        barplot(df, metric, ylabel, f"{args.outdir}/bar_{tag}{suffix}.png")
+
+    reroute_success_plot(df, f"{args.outdir}/reroute_success_rate{suffix}.png")
 
     print("Fatto.")
 
