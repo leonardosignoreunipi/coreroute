@@ -100,7 +100,7 @@ def main():
     # --- [STEP 4] Full Recompute: route ALL flows from scratch on perturbed network ---
     print("[5] Full Recompute step (all flows reset to KO)...")
     t0 = time.perf_counter()
-    _, n_full_ko = controller.full_recompute()
+    _, n_full_ko, n_full_rr = controller.full_recompute()
     t_full = time.perf_counter() - t0
     print(f"    Full Recompute done in {t_full:.4f}s  |  flows rerouted: {n_full_ko}")
 
