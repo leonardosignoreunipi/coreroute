@@ -71,10 +71,24 @@ class JanusKB:
                 
         return updated_count
     
-    def update_janus_kb(self, newValidRoutings):
-        j.query_once("retractall(routing(_, _))")
-        for r in newValidRoutings:
-            j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": str(r.path_id)})
+    def update_janus_kb(self, newValidRoutings, failedRoutings=[]):
+        """
+        This function updates the Janus KB with new valid routings and failed routings.
+        It first retracts all existing routing facts, then asserts the new valid routings.
+        For failed routings, it retracts the existing path and asserts a new path with an empty node list, and then asserts the routing.
+        """
+
+        try:
+            j.query_once("retractall(routing(_, _))")
+            for r in newValidRoutings:
+                j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": str(r.path_id)})
+            for r in failedRoutings:
+                j.query_once("retractall(path(PathId, _, _, _))", {"PathId": str(r.path_id)})
+                j.query_once("assertz(path(PathId, Src, Dst, []))", {"PathId": str(r.path_id), "Src": str(self.config.flows[r.flow_id].src_service), "Dst": str(self.config.flows[r.flow_id].dst_service)})
+                j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": str(r.path_id)})
+        except Exception as e:
+            logger.error(f"Error updating Janus KB: {e}")
+            raise JanusKBError(f"Error updating Janus KB: {e}")
 
     def query_partition(self):
         query = """
@@ -111,8 +125,8 @@ class JanusKB:
             return new_routings, failed_routings
         except Exception as e:
             logger.error(f"Error in recalculation: {e}")
-            return [], []
-    
+            raise JanusKBError(f"Error in recalculation: {e}")
+        
     def get_routings(self):
         query = "routing(FlowId, PathId), path(PathId, _, _, Nodes)"
         try:

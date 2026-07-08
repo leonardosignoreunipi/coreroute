@@ -32,7 +32,7 @@ class SDNcontroller:
             logger.error(f"Partition query failed: {e}")
             raise SDNcontrollerError(f"Partition query failed: {e}")
         new_valid_routings, failed_routings = self.engine.cr_routing(ok_flows, ko_flows)
-        self.kb.update_janus_kb(new_valid_routings)
+        self.kb.update_janus_kb(new_valid_routings, failed_routings)
             
         logger.info(f"continuos_reasoning: {len(failed_routings)} flows could not be rerouted")
         logger.debug(f"NewValidRoutings: {new_valid_routings}, FailedRoutings: {failed_routings}")
@@ -47,32 +47,17 @@ class SDNcontroller:
         [2] effettura cr_routing inviando tutti i flussi ko!!!
         [3] aggiorna la kb col nuovo routing valido
         [4] return newValidRouting, f_ko, f_rerouted 
+        
+        return newValidRouting, f_ko, f_rerouted
+        
+        newValidRouting: lista di Routing validi
+        f_ko: numero di flussi KO
+        f_rerouted: numero di flussi che sono stati rerouted con successo
         """
         self.kb.reset_all_routings()
         ko_flows = [Routing(flow_id=str(f.id), path_id=f"p_{f.id}_init")
             for f in self.config.flows.values()]
         new_valid_routings, failedRoutings = self.engine.cr_routing([], ko_flows)
         logger.debug(f"Full recompute: NewValidRoutings: {new_valid_routings} FailedRoutings: {failedRoutings}")
-        self.kb.update_janus_kb(new_valid_routings)
+        self.kb.update_janus_kb(new_valid_routings, failedRoutings)
         return new_valid_routings, len(ko_flows), len(new_valid_routings)
-
-def __main__():
-    if len(sys.argv) == 2:
-        topology_file = sys.argv[1]
-    else:
-        print("Usage: python SDNcontroller.py <topology_file>")
-        sys.exit(1)
-
-    config = ConfigLoader(topology_file).load()
-    network = Net(config)
-    kb = PrologKB(config, "routing_core.pl")
-    engine = Engine(network, kb, config)
-    controller = SDNcontroller(network, kb, config, engine)
-    controller.kb.initialize_kb()
-    newValidRoutings, koroutings, reroutedRoutings = controller.continuos_reasoning()
-    print(f"newValidRoutings: {newValidRoutings}\nkoRoutings: {koroutings}\nreroutedRoutings: {reroutedRoutings}")
-    controller.kb.update_janus_kb(newValidRoutings)
-    
-
-if __name__ == "__main__":
-    __main__()
