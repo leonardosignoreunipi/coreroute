@@ -1,6 +1,7 @@
 import sys
 import time
 import random
+import json
 from pathlib import Path
 import logging
 
@@ -111,10 +112,27 @@ def main():
     print(f"\n✅ Results:")
     print(f"   T_CR={t_cr:.6f}s  T_FULL={t_full:.6f}s  Speedup={speedup:.2f}x")
     print(f"   N_KO={n_ko}  N_R={n_r}  P_KO={pkt_ko:.3f}  P_R={pr:.3f}")
-    print(f"RESULTDATA:{num_edges},{num_nodes},{num_flows},{t_cr:.6f},{t_full:.6f},{n_ko},{n_full_ko},{n_modified}")
+    print(f"RESULTDATA:{num_edges},{num_nodes},{num_flows},{t_cr:.6f},{t_full:.6f},{n_ko},{n_full_ko},{n_modified}, {n_full_ko}, {n_full_rr}")
 
-    return (num_edges, num_nodes, num_flows, t_cr, t_full, n_ko, n_full_ko, n_modified)
+
+    res = {
+        "num_edges": num_edges,
+        "num_nodes": num_nodes,
+        "num_flows": num_flows,
+        "t_cr": t_cr,
+        "t_full": t_full,
+        "n_ko": n_ko,
+        "n_r": n_r,
+        "n_full_ko": n_full_ko,
+        "n_full_rr": n_full_rr,
+        "n_modified": n_modified,
+    }    
+
+    return res
 
 
 if __name__ == "__main__":
-    main()
+    res = main()
+    for key, value in res.items():
+        print(f"{key}: {value}")
+    print(f"RESULTJSON:{json.dumps(res)}")

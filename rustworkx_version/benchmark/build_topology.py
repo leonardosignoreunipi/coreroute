@@ -11,7 +11,7 @@ class GenerateTopologyError(Exception):
     pass
 
 def generate_sdn_topology(graph_type=None, num_routers=None, num_hosts=None, num_flows=None, filename=None, seed=None):
-    if graph_type is None or num_routers is None or num_hosts is None or num_flows is None or filename is None:
+    if graph_type is None or num_routers is None or num_hosts is None or num_flows is None or filename is None or seed is None:
         raise GenerateTopologyError("Missing required parameters for topology generation.")
 
     if seed is not None:
@@ -125,14 +125,15 @@ def generate_sdn_topology(graph_type=None, num_routers=None, num_hosts=None, num
 
 
 if __name__ == "__main__":
-    if len(sys.argv) == 6:
+    if len(sys.argv) == 7:
         generate_sdn_topology(
             graph_type=sys.argv[1],
             num_routers=int(sys.argv[2]),
             num_hosts=int(sys.argv[3]),
             num_flows=int(sys.argv[4]),
             filename=sys.argv[5],
+            seed=int(sys.argv[6])
         )
     else:
-        print("Usage: python build_topology.py <graph_type> <num_routers> <num_hosts> <num_flows> <filename>")
+        print("Usage: python build_topology.py <graph_type> <num_routers> <num_hosts> <num_flows> <filename> <seed>")
         sys.exit(0)

@@ -8,6 +8,7 @@ import json
 cartella_test = "topologies"
 script_test = "run_test.py"
 kb_file = "routing_core.pl"
+OUTPUT_FILE = "results/benchmark_k_shortest_path.json"
 
 TOPOLOGIA_NAMES = {
     "ba":   "Barabasi-Albert",
@@ -25,7 +26,7 @@ print(f"🚀 Trovati {len(file_topologie)} file di test. Inizio esecuzione bench
 for i, file_topo in enumerate(file_topologie, 1):
     # Estraiamo i parametri direttamente dal nome del file
     nome_base = os.path.basename(file_topo)
-    match = re.search(r"topo_(ba|er|iaag)_R(\d+)_H(\d+)_F(\d+)\.json", nome_base)
+    match = re.search(r"topo_(ba|er|iaag)_N(\d+)_H(\d+)_F(\d+)_S(\d+)\.json", nome_base)
     
     if not match:
         continue
@@ -34,8 +35,9 @@ for i, file_topo in enumerate(file_topologie, 1):
     num_routers = int(match.group(2))
     num_flows = int(match.group(4))
     num_hosts = int(match.group(3))
-    
-    print(f"[{i}/{len(file_topologie)}] Esecuzione su {gtype.upper()} | Router: {num_routers} | Host: {num_hosts} | Flussi: {num_flows}")
+    seed = int(match.group(5))
+
+    print(f"[{i}/{len(file_topologie)}] Esecuzione su {gtype.upper()} | Router: {num_routers} | Host: {num_hosts} | Flussi: {num_flows} | Seed: {seed}")
     
     comando = [
         "python3", script_test, 
@@ -46,28 +48,27 @@ for i, file_topo in enumerate(file_topologie, 1):
         # Eseguiamo il test e catturiamo l'output stampato nel terminale
         result = subprocess.run(comando, capture_output=True, text=True, check=True, timeout = 600)
         output = result.stdout
-        
-        # Cerchiamo la stringa con i dati completi (se test.py stampa RESULTDATA)
-        match_data = re.search(r"RESULTDATA:(\d+),(\d+),(\d+),([\d\.]+),([\d\.]+),(\d+)", output)
+
+        # Cerchiamo la riga con il dizionario di ritorno di run_test.main() serializzato in JSON
+        match_data = re.search(r"RESULTJSON:(\{.*\})", output)
 
         if match_data:
-            num_edges_reali = int(match_data.group(1))
-            num_nodes_reali = int(match_data.group(2))
-            num_flows_reali = int(match_data.group(3))
-            exec_time = float(match_data.group(4))
-            nocr_time = float(match_data.group(5))
-            flussi_ko = int(match_data.group(6))
+            res = json.loads(match_data.group(1))
 
             dati_risultati.append({
                 "file_test": nome_base,
                 "topologia": TOPOLOGIA_NAMES.get(gtype, gtype),
                 "nodi_iniziali": num_routers,
-                "nodi_reali_caricati": num_nodes_reali,
-                "archi_rimanenti": num_edges_reali,
-                "flussi": num_flows_reali,
-                "flussi_ko": flussi_ko,
-                "tempo_cr_sec": exec_time,
-                "tempo_non_cr_sec": nocr_time,
+                "nodi_reali_caricati": res["num_nodes"],
+                "archi_rimanenti": res["num_edges"],
+                "flussi": res["num_flows"],
+                "flussi_ko": res["n_ko"],
+                "flussi_rerouted": res["n_r"],
+                "flussi_ko_full": res["n_full_ko"],
+                "flussi_rerouted_full": res["n_full_rr"],
+                "link_modificati": res["n_modified"],
+                "tempo_cr_sec": res["t_cr"],
+                "tempo_non_cr_sec": res["t_full"],
             })
         else:
             # Fallback: se RESULTDATA non c'è, prendiamo solo il tempo stampato a schermo
@@ -92,10 +93,12 @@ for i, file_topo in enumerate(file_topologie, 1):
 if not dati_risultati:
     print("\nNessun dato raccolto. Il file benchmark.json non è stato generato.")
 else:
-    output_file = "benchmark.json"
+    
+    if not os.path.exists("results"):
+        os.mkdir("results")
     
     # Scriviamo la lista di dizionari nel file JSON in formato leggibile (indent=4)
-    with open(output_file, "w") as f:
+    with open(OUTPUT_FILE, "w") as f:
         json.dump(dati_risultati, f, indent=4)
         
-    print(f"\n✅ Benchmark completato! Tutti i {len(dati_risultati)} risultati sono stati salvati in '{output_file}'.")
+    print(f"\n✅ Benchmark completato! Tutti i {len(dati_risultati)} risultati sono stati salvati in '{OUTPUT_FILE}'.")
