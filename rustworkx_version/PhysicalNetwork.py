@@ -43,7 +43,7 @@ class PhysicalNetwork:
                 raise PhysicalNetworkError(f"Duplicate link between {l.src} and {l.dst}")
             self.graph.add_edge(idx1, idx2, {"bw": l.bw, "bw_nominal": l.bw_nominal, "length": l.length, "u": l.src, "v": l.dst})
 
-    def pruning_per_bandwith(self, requireBandwidth: float) -> rx.PyGraph:
+    def pruning_per_bandwidth(self, requireBandwidth: float) -> rx.PyGraph:
         """Returns a new graph by eliminating links with insufficient bandwidth. Complexity: O(E) where E is the number of edges."""
         pruned = self.graph.copy()
         edges_to_remove = []

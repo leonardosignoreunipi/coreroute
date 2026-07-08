@@ -3,8 +3,8 @@ import JanusKB
 import ConfigLoader
 import random
 import logging
-from collections import deque
 import rustworkx as rx
+import networkx as nx
 
 logger = logging.getLogger(__name__)
 
@@ -28,9 +28,9 @@ class RoutingEngine:
     def diff_score(self, old_path: list[str], new_path: list[str]):
         """
         Calcola la differenza simmetrica tra il vecchio e il nuovo path
-        Se il vecchio path non esiste, restituisce 0 
+        Se il vecchio path non esiste, restituisce 0
         """
-        if old_path == []: 
+        if not old_path:
             return 0
         try:
             set_old_path = set((u, v) for u, v in zip(old_path[:-1], old_path[1:]))
@@ -107,8 +107,8 @@ class RoutingEngine:
                 dst = self.network.node_map[old_path[-1]] #map nodes stringId to int
 
             required_bw = self.config.flows[flowId].required_bw(self.config.pckt_size)
-            graph_pruned = self.network.pruning_per_bandwith(required_bw)
-            candidates = self.search_candidates(graph_pruned, src, dst, flowId, old_path, required_bw)
+            graph_pruned = self.network.pruning_per_bandwidth(required_bw)
+            candidates = self.search_candidates2(graph_pruned, src, dst, flowId, old_path, required_bw)
 
             if len(candidates) == 0:
                 logger.warning(f"Not valid paths for flow: {flowId}")
@@ -125,6 +125,9 @@ class RoutingEngine:
 
     
     def search_candidates(self, graph_pruned, src, dst, flow_id, old_path_str=None, required_bw=None):
+        """
+        This function finds candidates paths using Dijkstra's algorithm with a custom weight function that penalizes edges used in the old path.
+        """
 
         MAX_CANDIDATES = 10
 
@@ -196,4 +199,36 @@ class RoutingEngine:
 
         candidates.sort(key=lambda x: x[0])
         logger.info(f"search_candidates: flow={flow_id} candidates_length={len(candidates)} paths")
+        return candidates
+    
+    def search_candidates2(self, graph_pruned, src: int, dst: int, flow_id, old_path_str=None, required_bw=None):
+        """
+        This function finds candidate paths with nx.shortest_simple_paths (k-shortest-paths),
+        favoring edges used in the old path (weight 0.1 vs 1.0) to minimize disruption.
+        """
+        MAX_CANDIDATES = 10
+
+        old_path_edges = set()
+        if old_path_str:
+            old_path_idx = [self.network.node_map[n] for n in old_path_str]
+            old_path_edges = set(zip(old_path_idx[:-1], old_path_idx[1:]))
+
+        nxgraph = nx.Graph()
+        nxgraph.add_nodes_from(graph_pruned.node_indices())
+        for u, v in graph_pruned.edge_list():
+            in_old = (u, v) in old_path_edges or (v, u) in old_path_edges
+            nxgraph.add_edge(u, v, weight=0.1 if in_old else 1.0)
+
+        candidates = []
+        try:
+            for c in nx.shortest_simple_paths(nxgraph, source=src, target=dst, weight='weight'):
+                path_str = [self.network.inv_node_map[n] for n in c]
+                score = self.diff_score(old_path_str, path_str)
+                candidates.append((score, path_str))
+                if len(candidates) >= MAX_CANDIDATES:
+                    break
+        except nx.NetworkXNoPath:
+            logger.warning(f"No path found for flow {flow_id} from {src} to {dst}")
+        candidates.sort(key=lambda x: x[0])
+        logger.info(f"search_candidates2: flow={flow_id} candidates_length={len(candidates)} paths")
         return candidates
