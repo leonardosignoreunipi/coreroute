@@ -4,6 +4,7 @@ import random
 import json
 from pathlib import Path
 import logging
+logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
@@ -81,10 +82,8 @@ def main():
 
     # --- [STEP 1] Init: CR routing with all flows KO (= full recompute on clean state) ---
     print("[2] Init routing (all flows KO → full recompute)...")
-    t0 = time.perf_counter()
-    controller.continuos_reasoning()
-    t_init = time.perf_counter() - t0
-    print(f"    Init done in {t_init:.4f}s")
+    newRoutings, n_ko, n_rr = controller.full_recompute()
+    logger.debug(f"Initial routing: {len(newRoutings)} valid routings, {n_ko} KO flows, {n_rr} rerouted.")
 
     # --- [STEP 2] Perturbation ---
     print(f"[3] Applying perturbation ({pct_links*100:.0f}% of router-router links)...")
@@ -132,6 +131,7 @@ def main():
 
 
 if __name__ == "__main__":
+    logger.setLevel(logging.DEBUG)
     res = main()
     for key, value in res.items():
         print(f"{key}: {value}")

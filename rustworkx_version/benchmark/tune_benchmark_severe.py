@@ -138,8 +138,10 @@ def run_trial_batch(config_base: dict) -> list:
                     "num_flows":   num_flows,
                     "T_CR":        t_cr,
                     "T_FULL":      t_full,
-                    "N_KO":        n_ko,
-                    "N_R":         n_r,
+                    "N_KO_CR":        n_ko,
+                    "N_R_CR":         n_r,
+                    "N_KO_FULL":      n_full_ko,
+                    "N_R_FULL":       n_full_r,
                     "P_KO":        n_ko / num_flows if num_flows > 0 else 0.0,
                     "P_R":         n_r / num_flows if num_flows > 0 else 0.0,
                     "Speedup":     speedup,
@@ -204,7 +206,7 @@ if __name__ == "__main__":
     results      = []
     done_trials  = 0
     done_batches = 0
-    csv_out = RESULTS_DIR / "benchmark_cr_severe.csv"
+    csv_out = RESULTS_DIR / "benchmark_cr_severe_shortest_simple_paths.csv"
 
     while active:
         ready, active = ray.wait(active, num_returns=1)
