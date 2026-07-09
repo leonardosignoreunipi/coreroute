@@ -18,9 +18,9 @@ class SDNcontroller:
         self.config = config
         self.engine = engine
 
-    def continuos_reasoning(self):
+    def continuous_reasoning(self):
         """
-        Esegue un ciclo di continuos reasoning 
+        Esegue un ciclo di continuous reasoning 
         [1] inizializza la KB
         [2] Esegue la partition
         [3] effettua il rerouting
@@ -34,7 +34,7 @@ class SDNcontroller:
         new_valid_routings, failed_routings = self.engine.cr_routing(ok_flows, ko_flows)
         self.kb.update_janus_kb(new_valid_routings, failed_routings)
             
-        logger.info(f"continuos_reasoning: {len(failed_routings)} flows could not be rerouted")
+        logger.info(f"continuous_reasoning: {len(failed_routings)} flows could not be rerouted")
         logger.debug(f"NewValidRoutings: {new_valid_routings}, FailedRoutings: {failed_routings}")
         
         return new_valid_routings, len(ko_flows), len(new_valid_routings) - len(ok_flows)

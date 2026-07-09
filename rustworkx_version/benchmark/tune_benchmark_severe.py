@@ -121,7 +121,7 @@ def run_trial_batch(config_base: dict) -> list:
 
                 # [CR] solo i flussi KO vengono re-instradati
                 t0 = time.perf_counter()
-                _, n_ko, n_r = ctrl.continuos_reasoning()
+                _, n_ko, n_r = ctrl.continuous_reasoning()
                 t_cr = time.perf_counter() - t0
 
                 # [FULL] tutti i flussi vengono re-instradati da zero

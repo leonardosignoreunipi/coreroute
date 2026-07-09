@@ -93,7 +93,7 @@ def main():
     # --- [STEP 3] CR: only re-route KO flows (continuous reasoning) ---
     print("[4] Continuous Reasoning step...")
     t0 = time.perf_counter()
-    _, n_ko, n_r = controller.continuos_reasoning()
+    _, n_ko, n_r = controller.continuous_reasoning()
     t_cr = time.perf_counter() - t0
     print(f"    CR done in {t_cr:.4f}s  |  KO flows: {n_ko}  |  rerouted: {n_r}")
 
