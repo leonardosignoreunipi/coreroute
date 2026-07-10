@@ -137,8 +137,18 @@ class JanusKB:
             logger.error(f"Error retrieving routings: {e}")
             raise JanusKBError(f"Error retrieving routings: {e}")
 
-    def get_path(self, pathId: str):
+    def get_all_paths(self) -> list[dict]:
+        query = "path(PathId, _, _, Nodes)"
+        try:
+            results = list(j.query(query))
+            return results
+        except Exception as e:
+            logger.error(f"Error retrieving all paths: {e}")
+            raise JanusKBError(f"Error retrieving all paths: {e}")
+
+    def get_path_by_id(self, pathId: str = None) -> List[str]:
         if not pathId:
+            logger.error("Path ID cannot be empty.")
             raise JanusKBError("Path ID cannot be empty.")
         query = f"path({pathId}, _, _, Nodes)"
         try:

@@ -5,6 +5,8 @@ import random
 import logging
 import rustworkx as rx
 import networkx as nx
+from Path_dict import Path_dict as pd
+
 
 logger = logging.getLogger(__name__)
 
@@ -23,7 +25,7 @@ class RoutingEngine:
         self.network = network
         self.kb = kb
         self.config = config
-        self._count_path = 0
+        self._pd = pd(kb)
 
     def diff_score(self, old_path: list[str], new_path: list[str]):
         """
@@ -85,10 +87,12 @@ class RoutingEngine:
             logger.info("Nessun KoFlow trovato!")
             return ok_flows, []
 
-        flowsNodes = {r.flow_id: self.kb.get_path(r.path_id) for r in ko_flows}
+        flowsNodes = {r.flow_id: self.kb.get_path_by_id(r.path_id) for r in ko_flows}
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
         temp_koflows = list(ko_flows)
 
+        self._pd.load_paths() #carico tutti i path on-demand per ogni ciclo di cr
+        
         while len(temp_koflows) > 0:
             routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
             flowId = routing.flow_id
@@ -112,10 +116,8 @@ class RoutingEngine:
             pathsIds = []
 
             for (_, nodes) in candidates:
-                self._count_path += 1
-                pathId = f"p_{self._count_path}"
-                pathsIds.append(pathId)
-                self.kb.put_path(pathId, nodes[0], nodes[-1], nodes)
+                path_id = self._pd.add_path(nodes) #se c'è già restituisce l'id altrimenti lo aggiunge e crea un id fresco
+                pathsIds.append(path_id)
             
             self.kb.put_candidates_paths(flowId, pathsIds)
             
