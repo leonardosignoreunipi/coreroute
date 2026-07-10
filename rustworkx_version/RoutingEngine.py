@@ -23,7 +23,7 @@ class RoutingEngine:
         self.network = network
         self.kb = kb
         self.config = config
-        self._cr_call_id = 0
+        self._count_path = 0
 
     def diff_score(self, old_path: list[str], new_path: list[str]):
         """
@@ -85,9 +85,6 @@ class RoutingEngine:
             logger.info("Nessun KoFlow trovato!")
             return ok_flows, []
 
-        self._cr_call_id += 1
-        call_id = self._cr_call_id
-
         flowsNodes = {r.flow_id: self.kb.get_path(r.path_id) for r in ko_flows}
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
         temp_koflows = list(ko_flows)
@@ -114,8 +111,9 @@ class RoutingEngine:
                 logger.warning(f"Not valid paths for flow: {flowId}")
             pathsIds = []
 
-            for index, (_, nodes) in enumerate(candidates):
-                pathId = f"{flowId}_c{call_id}_{index + 1}"
+            for (_, nodes) in candidates:
+                self._count_path += 1
+                pathId = f"p_{self._count_path}"
                 pathsIds.append(pathId)
                 self.kb.put_path(pathId, nodes[0], nodes[-1], nodes)
             
