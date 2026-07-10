@@ -54,7 +54,7 @@ class SDNcontroller:
         f_ko: numero di flussi KO
         f_rerouted: numero di flussi che sono stati rerouted con successo
         """
-        self.kb.reset_all_routings()
+        #self.kb.reset_all_routings() inutile cr_routing non guarda la kb ma solo le liste passate come argomento
         ko_flows = [Routing(flow_id=str(f.id), path_id=f"p_{f.id}_init")
             for f in self.config.flows.values()]
         new_valid_routings, failedRoutings = self.engine.cr_routing([], ko_flows)

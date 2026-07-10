@@ -71,11 +71,14 @@ class JanusKB:
                 
         return updated_count
     
-    def update_janus_kb(self, newValidRoutings, failedRoutings=[]):
+    def update_janus_kb(self, newValidRoutings: List[Routing], failedRoutings: List[Routing] = []):
         """
         This function updates the Janus KB with new valid routings and failed routings.
         It first retracts all existing routing facts, then asserts the new valid routings.
         For failed routings, it retracts the existing path and asserts a new path with an empty node list, and then asserts the routing.
+        
+        newValidRoutings: List of Routing objects that are valid and should be added to the KB.
+        failedRoutings: List of Routing objects that failed and should have their paths cleared in
         """
 
         try:

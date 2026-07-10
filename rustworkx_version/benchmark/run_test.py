@@ -8,6 +8,7 @@ logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
+from Debugkb import DebugKB
 from SDNcontroller import SDNcontroller
 from ConfigLoader import ConfigLoader
 from PhysicalNetwork import PhysicalNetwork as Net
@@ -71,6 +72,7 @@ def main():
     config = ConfigLoader(topology_file).load()
     network = Net(config)
     kb = PrologKB(config, kb_file)
+    dkb = DebugKB(kb)
     engine = Engine(network, kb, config)
     controller = SDNcontroller(network, kb, config, engine)
     controller.kb.initialize_kb()
@@ -80,10 +82,14 @@ def main():
     num_flows = len(config.flows)
     print(f"[1] Topology loaded: {num_nodes} nodes, {num_edges} edges, {num_flows} flows.")
 
+    dkb.saves_snapshot_kb("Snapshot kb before Init")
+
     # --- [STEP 1] Init: CR routing with all flows KO (= full recompute on clean state) ---
     print("[2] Init routing (all flows KO → full recompute)...")
     newRoutings, n_ko, n_rr = controller.full_recompute()
     logger.debug(f"Initial routing: {len(newRoutings)} valid routings, {n_ko} KO flows, {n_rr} rerouted.")
+
+    dkb.saves_snapshot_kb("Snapshot kb after Init before perturbation")
 
     # --- [STEP 2] Perturbation ---
     print(f"[3] Applying perturbation ({pct_links*100:.0f}% of router-router links)...")
@@ -97,12 +103,16 @@ def main():
     t_cr = time.perf_counter() - t0
     print(f"    CR done in {t_cr:.4f}s  |  KO flows: {n_ko}  |  rerouted: {n_r}")
 
+    dkb.saves_snapshot_kb("Snapshot kb after CR before full recompute")
+
     # --- [STEP 4] Full Recompute: route ALL flows from scratch on perturbed network ---
     print("[5] Full Recompute step (all flows reset to KO)...")
     t0 = time.perf_counter()
     _, n_full_ko, n_full_rr = controller.full_recompute()
     t_full = time.perf_counter() - t0
     print(f"    Full Recompute done in {t_full:.4f}s  |  flows rerouted: {n_full_ko}")
+
+    dkb.saves_snapshot_kb("Snapshot kb after full recompute")
 
     speedup = t_full / t_cr if t_cr > 0 else float('inf')
     pkt_ko = n_ko / num_flows if num_flows > 0 else 0.0
