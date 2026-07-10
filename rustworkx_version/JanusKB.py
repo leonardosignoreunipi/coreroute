@@ -75,7 +75,7 @@ class JanusKB:
         """
         This function updates the Janus KB with new valid routings and failed routings.
         It first retracts all existing routing facts, then asserts the new valid routings.
-        For failed routings, it retracts the existing path and asserts a new path with an empty node list, and then asserts the routing.
+        For failed routings, it restores the init path with an empty node list, and then asserts the routing.
         
         newValidRoutings: List of Routing objects that are valid and should be added to the KB.
         failedRoutings: List of Routing objects that failed and should have their paths cleared in
@@ -86,9 +86,7 @@ class JanusKB:
             for r in newValidRoutings:
                 j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": str(r.path_id)})
             for r in failedRoutings:
-                j.query_once("retractall(path(PathId, _, _, _))", {"PathId": str(r.path_id)})
-                j.query_once("assertz(path(PathId, Src, Dst, []))", {"PathId": str(r.path_id), "Src": str(self.config.flows[r.flow_id].src_service), "Dst": str(self.config.flows[r.flow_id].dst_service)})
-                j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": str(r.path_id)})
+                j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": f"p_{str(r.flow_id)}_init"})
         except Exception as e:
             logger.error(f"Error updating Janus KB: {e}")
             raise JanusKBError(f"Error updating Janus KB: {e}")
