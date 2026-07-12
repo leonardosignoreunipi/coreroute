@@ -19,12 +19,12 @@ partition(AllFlows, OkFlows, KoFlows) :-
     findall(routing(FlowId, PathId), (routing(FlowId,PathId),validPath(FlowId, PathId, AllFlows)), OkFlows), 
     subtract(AllFlows, OkFlows, KoFlows).
 
-crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings) :-
-    reRoute(FlowId, OldRoutings, NewValidPathId), 
-    crRouting(Tail, [routing(FlowId, NewValidPathId)|OldRoutings], NewRoutings).
- crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings) :-
-     crRouting(Tail, [routing(FlowId, PathId)|OldRoutings], NewRoutings).
-crRouting([], NewValidRoutings, NewValidRoutings).
+crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings, Failed) :-
+    reRoute(FlowId, OldRoutings, NewValidPathId),
+    crRouting(Tail, [routing(FlowId, NewValidPathId)|OldRoutings], NewRoutings, Failed).
+crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings, [routing(FlowId, PathId)|Failed]) :-
+    crRouting(Tail, OldRoutings, NewRoutings, Failed).
+crRouting([], NewValidRoutings, NewValidRoutings, []).
 
 reRoute(FlowId, Routings, NextPathId) :-
     nextCandidate(FlowId, NextPathId), 
@@ -88,33 +88,6 @@ hopLatency(FlowId, Node1, Node2, Delay) :-
     Dtrasm is PcktSize / Bandwidth, 
     Dprop is Length / SpeedOfLight, 
     Delay is QTime1 + Dtrasm + Dprop.
-
-find_valid_paths(FlowId, Path, OkRoutings) :-
-    flow(FlowId, SrcService, DstService, MaxLatency, _),
-    host(SrcHost, SrcServices), member(SrcService, SrcServices),
-    host(DstHost, DstServices), member(DstService, DstServices),
-
-    requiredBandwidth(FlowId, RequiredBandwidth),
-
-    search_path(FlowId, RequiredBandwidth, SrcHost, DstHost, [SrcHost], Path, 0, MaxLatency, OkRoutings).
-
-search_path(_, _, Dst, Dst, Visited, Path, _, _, _) :- reverse(Visited, Path).
-
-search_path(FlowId, RequiredBandwidth, Current, Dst, Visited, Path, CurrLatency, MaxLatency, OkRoutings) :-
-    s_link(Current, Next, _, Length),\+ member(Next, Visited),
-    
-    speedOfLight(SpeedOfLight),pcktSize(_,PcktSize),
-
-    availableBandwidthLink(FlowId, Current, Next, OkRoutings, EffectiveBw), EffectiveBw >= RequiredBandwidth,
-
-    node_qtime(Current, QTime1),
-    Dtrasm is PcktSize / EffectiveBw,
-    Dprop is Length / SpeedOfLight,
-    NewLatency is CurrLatency + Dtrasm + Dprop + QTime1,
-
-    NewLatency =< MaxLatency,
-
-    search_path(FlowId, RequiredBandwidth, Next, Dst, [Next|Visited], Path, NewLatency, MaxLatency, OkRoutings).
 
 % --- UTILS ---
 s_link(X, Y, Bandwidth, Length) :- link(X, Y, Bandwidth, Length).
