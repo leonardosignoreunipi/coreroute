@@ -8,7 +8,7 @@ logger = logging.getLogger(__name__)
 
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from Debugkb import DebugKB
+from rustworkx_version.benchmark.Debugkb import DebugKB
 from SDNcontroller import SDNcontroller
 from ConfigLoader import ConfigLoader
 from PhysicalNetwork import PhysicalNetwork as Net
