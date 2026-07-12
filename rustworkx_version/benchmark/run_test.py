@@ -80,37 +80,37 @@ def main():
     num_nodes = network.graph.num_nodes()
     num_edges = network.graph.num_edges()
     num_flows = len(config.flows)
-    print(f"[1] Topology loaded: {num_nodes} nodes, {num_edges} edges, {num_flows} flows.")
+    logger.debug(f"[1] Topology loaded: {num_nodes} nodes, {num_edges} edges, {num_flows} flows.")
 
-    dkb.saves_snapshot_kb("Snapshot kb before Init")
+    dkb.saves_snapshot_kb("\n\nSnapshot kb before Init\n\n")
 
     # --- [STEP 1] Init: CR routing with all flows KO (= full recompute on clean state) ---
-    print("[2] Init routing (all flows KO → full recompute)...")
+    logger.debug("[2] Init routing (all flows KO → full recompute)...")
     newRoutings, n_ko, n_rr = controller.full_recompute()
-    logger.debug(f"Initial routing: {len(newRoutings)} valid routings, {n_ko} KO flows, {n_rr} rerouted.")
+    logger.debug(f"START ROUTING {len(newRoutings)} valid routings, {n_ko} KO flows, {n_rr} rerouted.")
 
-    dkb.saves_snapshot_kb("Snapshot kb after Init before perturbation")
+    dkb.saves_snapshot_kb("\n\nSnapshot kb after Init before perturbation\n\n")
 
     # --- [STEP 2] Perturbation ---
-    print(f"[3] Applying perturbation ({pct_links*100:.0f}% of router-router links)...")
+    logger.debug(f"[3] Applying perturbation ({pct_links*100:.0f}% of router-router links)...")
     tester = Test(controller)
     n_modified = tester.perturbation(pct_links)
 
     # --- [STEP 3] CR: only re-route KO flows (continuous reasoning) ---
-    print("[4] Continuous Reasoning step...")
+    logger.debug("[4] Continuous Reasoning step...")
     t0 = time.perf_counter()
     _, n_ko, n_r = controller.continuous_reasoning()
     t_cr = time.perf_counter() - t0
-    print(f"    CR done in {t_cr:.4f}s  |  KO flows: {n_ko}  |  rerouted: {n_r}")
+    logger.debug(f"    CR done in {t_cr:.4f}s  |  KO flows: {n_ko}  |  rerouted: {n_r}")
 
     dkb.saves_snapshot_kb("Snapshot kb after CR before full recompute")
 
     # --- [STEP 4] Full Recompute: route ALL flows from scratch on perturbed network ---
-    print("[5] Full Recompute step (all flows reset to KO)...")
+    logger.debug("[5] Full Recompute step (all flows reset to KO)...")
     t0 = time.perf_counter()
     _, n_full_ko, n_full_rr = controller.full_recompute()
     t_full = time.perf_counter() - t0
-    print(f"    Full Recompute done in {t_full:.4f}s  |  flows rerouted: {n_full_ko}")
+    logger.debug(f"    Full Recompute done in {t_full:.4f}s  |  flows rerouted: {n_full_ko}")
 
     dkb.saves_snapshot_kb("Snapshot kb after full recompute")
 
@@ -118,10 +118,11 @@ def main():
     pkt_ko = n_ko / num_flows if num_flows > 0 else 0.0
     pr = n_r / num_flows if num_flows > 0 else 0.0
 
-    print(f"\n✅ Results:")
-    print(f"   T_CR={t_cr:.6f}s  T_FULL={t_full:.6f}s  Speedup={speedup:.2f}x")
-    print(f"   N_KO={n_ko}  N_R={n_r}  P_KO={pkt_ko:.3f}  P_R={pr:.3f}")
-    print(f"RESULTDATA:{num_edges},{num_nodes},{num_flows},{t_cr:.6f},{t_full:.6f},{n_ko},{n_full_ko},{n_modified}, {n_full_ko}, {n_full_rr}")
+    #print(f"\n✅ Results:")
+    logger.debug(f"   T_CR={t_cr:.6f}s  T_FULL={t_full:.6f}s  Speedup={speedup:.2f}x")
+    logger.debug(f"   N_KO={n_ko}  N_R={n_r} ")
+    logger.debug(f"   N_FULL_KO = {n_full_ko} N_FULL_RR = {n_full_rr}")
+    #print(f"RESULTDATA:{num_edges},{num_nodes},{num_flows},{t_cr:.6f},{t_full:.6f},{n_ko},{n_full_ko},{n_modified}, {n_full_ko}, {n_full_rr}")
 
 
     res = {

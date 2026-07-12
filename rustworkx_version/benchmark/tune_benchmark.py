@@ -56,7 +56,6 @@ def run_trial_batch(config_base: dict) -> list:
     flow_factor = config_base["flow_factor"]
     seed        = config_base["seed"]
     num_flows   = int(flow_factor * n)
-    num_hosts   = max(2, n // 10)
 
     topo_file = None
     results   = []
@@ -67,7 +66,7 @@ def run_trial_batch(config_base: dict) -> list:
         fd, topo_file = tempfile.mkstemp(suffix=".json")
         os.close(fd)
         generate_sdn_topology(
-            graph_type=topology, num_routers=n, num_hosts=num_hosts,
+            graph_type=topology, num_nodes=n,
             num_flows=num_flows, filename=topo_file, seed=seed,
         )
 

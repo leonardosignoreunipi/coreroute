@@ -10,12 +10,9 @@ os.makedirs(OUTPUT_DIR, exist_ok=True)
 
 # PDF parameters
 GRAPH_TYPES   = ["er", "ba", "iaag"]
-SIZES         = [1000]          # |V| (routers)
-FLOW_FACTORS  = [1.00]       # |F| = factor × |V|
+SIZES         = [250, 500, 750, 1000]          # |V| (routers, hosts)
+FLOW_FACTORS  = [0.25, 0.50, 0.75, 1.00]       # |F| = factor × |V|
 SEEDS = [104729, 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863]
-
-def num_hosts(n):
-    return max(2, n // 10)
 
 total = len(GRAPH_TYPES) * len(SIZES) * len(FLOW_FACTORS) * len(SEEDS)
 counter = 1
@@ -27,18 +24,17 @@ for gtype in GRAPH_TYPES:
         for ff in FLOW_FACTORS:
             for seed in SEEDS:
                 num_flows = int(ff * n)
-                nh = num_hosts(n)
-                filename = f"{OUTPUT_DIR}/topo_{gtype}_N{n}_H{nh}_F{num_flows}_S{seed}.json"
+                filename = f"{OUTPUT_DIR}/topo_{gtype}_N{n}_F{num_flows}_S{seed}.json"
 
                 if os.path.exists(filename):
                     print(f"[{counter}/{total}] Skipped (exists): {filename}")
                     counter += 1
                     continue
 
-                print(f"[{counter}/{total}] Generating: {filename}  (gtype={gtype}, n={n}, hosts={nh}, flows={num_flows})")
+                print(f"[{counter}/{total}] Generating: {filename}  (gtype={gtype}, nodes={n}, flows={num_flows})")
                 cmd = [
                     "python3", "build_topology.py",
-                    gtype, str(n), str(nh), str(num_flows), filename, str(seed)
+                    gtype, str(n), str(num_flows), filename, str(seed)
                 ]
                 try:
                     subprocess.run(cmd, check=True)

@@ -26,18 +26,17 @@ print(f"🚀 Trovati {len(file_topologie)} file di test. Inizio esecuzione bench
 for i, file_topo in enumerate(file_topologie, 1):
     # Estraiamo i parametri direttamente dal nome del file
     nome_base = os.path.basename(file_topo)
-    match = re.search(r"topo_(ba|er|iaag)_N(\d+)_H(\d+)_F(\d+)_S(\d+)\.json", nome_base)
+    match = re.search(r"topo_(ba|er|iaag)_N(\d+)_F(\d+)_S(\d+)\.json", nome_base)
     
     if not match:
         continue
         
     gtype = match.group(1)
-    num_routers = int(match.group(2))
-    num_flows = int(match.group(4))
-    num_hosts = int(match.group(3))
-    seed = int(match.group(5))
+    num_nodes = int(match.group(2))
+    num_flows = int(match.group(3))
+    seed = int(match.group(4))
 
-    print(f"[{i}/{len(file_topologie)}] Esecuzione su {gtype.upper()} | Router: {num_routers} | Host: {num_hosts} | Flussi: {num_flows} | Seed: {seed}")
+    print(f"[{i}/{len(file_topologie)}] Esecuzione su {gtype.upper()} | Router: {num_nodes} | Flussi: {num_flows} | Seed: {seed}")
     
     comando = [
         "python3", script_test, 
@@ -58,7 +57,7 @@ for i, file_topo in enumerate(file_topologie, 1):
             dati_risultati.append({
                 "file_test": nome_base,
                 "topologia": TOPOLOGIA_NAMES.get(gtype, gtype),
-                "nodi_iniziali": num_routers,
+                "nodi_iniziali": num_nodes,
                 "nodi_reali_caricati": res["num_nodes"],
                 "archi_rimanenti": res["num_edges"],
                 "flussi": res["num_flows"],
@@ -78,7 +77,7 @@ for i, file_topo in enumerate(file_topologie, 1):
                 dati_risultati.append({
                     "file_test": nome_base,
                     "topologia": TOPOLOGIA_NAMES.get(gtype, gtype),
-                    "nodi_iniziali": num_routers,
+                    "nodi_iniziali": num_nodes,
                     "flussi": num_flows,
                     "tempo_cr_sec": exec_time
                 })
