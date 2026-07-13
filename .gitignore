@@ -13,3 +13,4 @@ rustworkx_version/benchmark/*.pdf
 .DS_Store
 *.log
 *.txt
+networkx_version/benchmark/results

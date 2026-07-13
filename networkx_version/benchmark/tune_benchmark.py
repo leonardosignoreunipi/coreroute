@@ -90,7 +90,7 @@ def run_trial_batch(config_base: dict) -> list:
             if not (u.startswith("h") or v.startswith("h"))
         ]
 
-        # snapshot dello stato post-init: sarà ripristinato dopo ogni perturbazione
+        # snapshot dello stato post-init (paths e routings): sarà ripristinato dopo ogni perturbazione
         post_init_snapshot = kb.snapshot_kb_state()
 
         # ── loop su ogni livello di perturbazione ────────────────────────
@@ -180,6 +180,13 @@ if __name__ == "__main__":
     os.environ["RAY_local_fs_capacity_threshold"] = "0.99"
     RESULTS_DIR.mkdir(exist_ok=True)
     NUM_WORKERS = 4
+    
+    
+    if len(sys.argv) > 2: OUTPUT_CSV = sys.argv[2]
+    else: 
+        print("Usage: python tune_benchmark.py <output_csv>")
+        sys.exit(0) 
+
     ray.init(num_cpus=NUM_WORKERS)
 
     # 480 batch: niente pct_mod nel prodotto cartesiano
@@ -200,7 +207,7 @@ if __name__ == "__main__":
     results      = []
     done_trials  = 0
     done_batches = 0
-    csv_out = RESULTS_DIR / "benchmark_cr_severe_shortest_simple_paths.csv"
+    csv_out = RESULTS_DIR / OUTPUT_CSV
 
     while active:
         ready, active = ray.wait(active, num_returns=1)

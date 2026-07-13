@@ -7,12 +7,19 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ER/BA: 10% of the total nodes are hosts, the rest are routers.
-HOST_FRACTION = 0.10
-# Router-router link bandwidth (Mbps) for ER/BA topologies.
-ROUTER_BW = (100.0, 1000.0)
-# Host-access link capacity (Mbps) for ER/BA: high enough to never constrain routing.
-ACCESS_BW = 50000.0
+# ER/BA 
+HOST_FRACTION = 0.10 # 10% of the total nodes are hosts, the rest are routers.
+ROUTER_BW = (100.0, 1000.0) # Router-router link bandwidth range (Mbps)
+
+# ER/BA/IAAG 
+ACCESS_BW = 50000.0 # host-access link capacity (Mbps): high enough to never constrain routing.
+PCKT_RATE = (1.0, 50.0) # how many packet send per second for a single flow (min, max), requested_bw(flow) = PCKT_SIZE * PCKT_RATE
+MAX_LATENCY = 1e9 # max latency tollerable per flow (seconds)
+RR_LINK_LENGTH = (1, 10) # length range (min, max) for router-router link (km)
+ACCESS_LINK_LENGTH = 1.0 # host-router link length (km)
+QTIME = 0.0 # router queue time 
+SPEED_OF_LIGHT = 300000.0
+PCKT_SIZE = 1.0 # packet size; required_bw = PCKT_SIZE * PCKT_RATE. It's possible set a PCKT_SIZE for each flow
 
 # IAAG: link bandwidth range (Mbps) keyed by the unordered pair of endpoint tiers.
 # Node tiers come from networkx.random_internet_as_graph:
@@ -29,6 +36,7 @@ IAAG_BW_TIERS = {
 
 
 class GenerateTopologyError(Exception):
+    """Custom exception for topology generation errors."""
     pass
 
 
@@ -39,6 +47,37 @@ def _iaag_link_bw(type_u, type_v):
 
 
 def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filename=None, seed=None):
+    
+    """
+    Generate a synthetic SDN topology and write it to `filename` as JSON.
+
+    Three graph models are supported via `graph_type`:
+      - "er":   Erdős-Rényi G(n, p) router core (p = log2(R)/R), regenerated until
+                connected; ~HOST_FRACTION of the nodes are hosts, the rest routers.
+      - "ba":   Barabási-Albert scale-free router core (m = log2(R)); same host split.
+      - "iaag": networkx.random_internet_as_graph, a hierarchical AS model where
+                customer (C) nodes become hosts and T/M/CP nodes become routers, so
+                the host/router split emerges from the model (~75-80% hosts).
+
+    In every model each host attaches to the router core, link bandwidths are set by
+    role/tier (host-access links are over-provisioned so they never constrain
+    routing), and `bw_nominal` stores the pristine bandwidth used to restore links
+    after a perturbation. Flows connect random distinct host pairs; each flow is
+    seeded with an empty "init" path and matching routing, so the controller starts
+    with all flows unrouted (KO) — the baseline state the benchmark perturbs from.
+
+    Args:
+        graph_type: "er", "ba" or "iaag".
+        num_nodes:  total number of nodes (hosts + routers) requested.
+        num_flows:  number of flows to generate.
+        filename:   output path for the topology JSON.
+        seed:       RNG seed; makes the generated topology reproducible.
+
+    Raises:
+        GenerateTopologyError: missing arguments, unsupported graph_type, node count
+        too small to split, a missing IAAG node tier, or fewer than two hosts.
+    """
+    
     if graph_type is None or num_nodes is None or num_flows is None or filename is None or seed is None:
         raise GenerateTopologyError("Missing required parameters for topology generation.")
 
@@ -74,8 +113,10 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
 
         # relabel integer router nodes 0..num_routers-1 to "r{i}" string ids
         core_graph = nx.relabel_nodes(core_graph, {i: f"r{i}" for i in core_graph.nodes()})
-        routers = [{"id": f"r{i}", "qtime": 0.0} for i in range(num_routers)]
+        routers = [{"id": f"r{i}", "qtime": QTIME} for i in range(num_routers)]
 
+        # Attach each host to one random router via a high-capacity access link.
+        # Host nodes keep their string id ("h{i}"); routers were relabelled to "r{i}" above.
         hosts = []
         for i in range(num_hosts):
             host_id = f"h{i}"
@@ -90,10 +131,10 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
         for src_id, dst_id in core_graph.edges:
             if src_id.startswith('h') or dst_id.startswith('h'):
                 bw = ACCESS_BW
-                length = 1.0
+                length = ACCESS_LINK_LENGTH
             else:
                 bw = float(random.uniform(*ROUTER_BW))
-                length = float(random.randint(1, 10))
+                length = float(random.randint(*RR_LINK_LENGTH))
             links.append({"src": src_id, "dst": dst_id, "bw": bw, "bw_nominal": bw, "length": length})
 
     elif graph_type == "iaag":
@@ -103,7 +144,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
         G_nx = nx.random_internet_as_graph(num_nodes, seed=seed)
         attemp = 1
         while not nx.is_connected(G_nx):
-            logger.warning(f"Seed {seed} is not connected for Iaag graph generation")
+            logger.warning(f"Seed {seed} not connected (IAAG), retrying")
             G_nx = nx.random_internet_as_graph(num_nodes, seed=seed + attemp)
             attemp += 1
 
@@ -113,8 +154,12 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
         hosts = []
         r_count = 0
         h_count = 0
-        for n in sorted(G_nx.nodes()):
-            tier = G_nx.nodes[n]["type"]
+        for n, attr in sorted(G_nx.nodes(data = True)):
+            try:
+                tier = attr["type"]
+            except KeyError: 
+                logger.error(f"Node {n} in the IAAG topology is missing the 'type' attribute.")
+                raise GenerateTopologyError(f"Failed to generate IAAG topology: Node {n} lacks the required 'type' attribute.")
             if tier == "C":
                 host_id = f"h{h_count}"
                 hosts.append({"id": host_id, "services": [f"s{h_count}"]})
@@ -123,7 +168,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
                 h_count += 1
             else:
                 router_id = f"r{r_count}"
-                routers.append({"id": router_id, "qtime": 0.0})
+                routers.append({"id": router_id, "qtime": QTIME})
                 node_id[n] = router_id
                 node_type[router_id] = tier
                 r_count += 1
@@ -140,17 +185,21 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
             src_id = node_id[u]
             dst_id = node_id[v]
             if src_id.startswith('h') or dst_id.startswith('h'):
-                bw = ACCESS_BW                                   # accesso host: alta capacità
-                length = 1.0
+                bw = ACCESS_BW                                 
+                length = ACCESS_LINK_LENGTH
             else:
                 bw = _iaag_link_bw(node_type[src_id], node_type[dst_id])
-                length = float(random.randint(1, 10))
+                length = float(random.randint(*RR_LINK_LENGTH))
             links.append({"src": src_id, "dst": dst_id, "bw": bw, "bw_nominal": bw, "length": length})
 
     else:
         raise GenerateTopologyError(f"Graph type '{graph_type}' not supported. Use 'er', 'ba', or 'iaag'.")
 
-    # Flows: random distinct host pairs, rate ~ U(1, 50) (with pckt_size=1 → required_bw = rate)
+    # Flows + initial (empty) routing state.
+    # Each flow links a random distinct pair of hosts and requests a rate drawn from
+    # PCKT_RATE (with PCKT_SIZE=1 the required bandwidth equals the rate).
+    # Every flow is bound to an empty "init" path, so the controller starts with all
+    # flows KO (unrouted) — the baseline the benchmark perturbs and reroutes from.
     num_hosts = len(hosts)
     flows = []
     paths = []
@@ -164,17 +213,19 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
             "id": flow_id,
             "src_service": hosts[src_idx]["services"][0],
             "dst_service": hosts[dst_idx]["services"][0],
-            "max_latency": 1e9,
-            "rate": float(random.uniform(1.0, 50.0))
+            "max_latency": MAX_LATENCY,
+            "rate": float(random.uniform(*PCKT_RATE))
         })
+        # Use "_init" suffix to prevent naming collisions with paths generated
+        # during the rerouting phase (which use the format p_1, p_2, etc.).
         path_id = f"p_{flow_id}_init"
         paths.append({"id": path_id, "src": hosts[src_idx]["id"], "dst": hosts[dst_idx]["id"], "nodes": []})
         routings.append({"flow_id": flow_id, "path_id": path_id})
 
     topology = {
         "constants": {
-            "SPEED_OF_LIGHT": 300000.0,
-            "PCKT_SIZE": 1.0
+            "SPEED_OF_LIGHT": SPEED_OF_LIGHT,
+            "PCKT_SIZE": PCKT_SIZE
         },
         "flows": flows,
         "routers": routers,
