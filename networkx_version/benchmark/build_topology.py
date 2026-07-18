@@ -202,8 +202,8 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
     # flows KO (unrouted) — the baseline the benchmark perturbs and reroutes from.
     num_hosts = len(hosts)
     flows = []
-    paths = []
     routings = []
+    paths = [{"id": "p_init", "src": "none", "dst": "none", "nodes": []}]
     for i in range(num_flows):
         flow_id = f"f{i}"
         src_idx = random.randint(0, num_hosts - 1)
@@ -218,9 +218,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
         })
         # Use "_init" suffix to prevent naming collisions with paths generated
         # during the rerouting phase (which use the format p_1, p_2, etc.).
-        path_id = f"p_{flow_id}_init"
-        paths.append({"id": path_id, "src": hosts[src_idx]["id"], "dst": hosts[dst_idx]["id"], "nodes": []})
-        routings.append({"flow_id": flow_id, "path_id": path_id})
+        routings.append({"flow_id": flow_id, "path_id": "p_init"})
 
     topology = {
         "constants": {

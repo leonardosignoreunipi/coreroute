@@ -61,7 +61,7 @@ class SDNcontroller:
             f_ko: number of KO flows
             f_rerouted: number of successfully rerouted flows
         """
-        ko_flows = [Routing(flow_id=str(f.id), path_id=f"p_{f.id}_init") for f in self.config.flows.values()]
+        ko_flows = [Routing(flow_id=str(f.id), path_id="p_init") for f in self.config.flows.values()]
         
         new_valid_routings, failedRoutings = self.engine.re_routing([], ko_flows)
         

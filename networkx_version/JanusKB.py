@@ -110,7 +110,7 @@ class JanusKB:
             for r in newValidRoutings:
                 j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": str(r.path_id)})
             for r in failedRoutings:
-                j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": f"p_{str(r.flow_id)}_init"})
+                j.query_once("assertz(routing(FlowId, PathId))", {"FlowId": str(r.flow_id), "PathId": f"p_init"})
         except Exception as e:
             logger.error(f"Error updating Janus KB: {e}")
             raise JanusKBError(f"Error updating Janus KB: {e}")
@@ -249,16 +249,9 @@ class JanusKB:
             j.query_once("retractall(routing(_, _))")
             j.query_once("retractall(path(_, _, _, _))")
             j.query_once("retractall(pathsCandidates(_, _))")
+            j.query_once( "assertz(path(PathId, Src, Dst, []))", {"PathId": "p_init", "Src": "none", "Dst": "none"}) #src and dst not read during re-routing
             for f in self.config.flows.values():
-                init_path_id = f"p_{f.id}_init"
-                j.query_once(
-                    "assertz(path(PathId, Src, Dst, []))",
-                    {"PathId": init_path_id, "Src": str(f.src_service), "Dst": str(f.dst_service)}
-                )
-                j.query_once(
-                    "assertz(routing(FlowId, PathId))",
-                    {"FlowId": str(f.id), "PathId": init_path_id}
-                )
+                j.query_once("assertz(routing(FlowId, PathId))",{"FlowId": str(f.id), "PathId": "p_init"})
         except Exception as e:
             logger.error(f"Error resetting routings: {e}")
             raise JanusKBError(f"Error resetting routings: {e}")

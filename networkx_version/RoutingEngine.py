@@ -34,7 +34,7 @@ class RoutingEngine:
         self.network = network
         self.kb = kb
         self.config = config
-        self._pr = pr(kb)
+        self._pr = pr()
         
     def path_latency(self, flow_id: str, nodes: list[str]) -> float:
         """
@@ -155,7 +155,8 @@ class RoutingEngine:
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
         temp_koflows = list(ko_flows)
 
-        self._pr.load_paths() #load all current paths from kb
+        paths = self.kb.get_all_paths()
+        self._pr.load_paths(paths) #load all current paths in a dictonary
         
         while len(temp_koflows) > 0:
             routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
@@ -179,7 +180,8 @@ class RoutingEngine:
             pathsIds = []
 
             for (_, nodes) in candidates:
-                path_id = self._pr.intern_path(nodes) # returns the existing id, or inserts(assertz) the path and mints a fresh id
+                path_id, is_new = self._pr.intern_path(nodes) # returns the existing id or if not exists returns a fresh id
+                if is_new: self.kb.put_path(path_id, nodes[0], nodes[-1], nodes)
                 pathsIds.append(path_id)
             
             self.kb.put_candidates_paths(flowId, pathsIds)
