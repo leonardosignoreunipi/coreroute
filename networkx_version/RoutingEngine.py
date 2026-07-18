@@ -35,6 +35,28 @@ class RoutingEngine:
         self.kb = kb
         self.config = config
         self._pr = pr(kb)
+        
+    def path_latency(self, flow_id: str, nodes: list[str]) -> float:
+        """
+        Total latency of a path for a flow. For each hop (u, v):
+        transmission (pckt_size * rate / bw) + propagation (length / c)
+        + qtime of the sending node. Mirrors hopLatency in routing_core.pl.
+
+        Returns 0.0 for empty or single-node paths.
+        """
+        if not nodes or len(nodes) < 2:
+            return 0.0
+        rate = self.config.flows[flow_id].rate
+        pckt_size = self.config.pckt_size 
+        c = self.config.speed_of_light
+        total = 0.0
+        for u, v in zip(nodes[:-1], nodes[1:]):
+            edge = self.network.graph[u][v]
+            d_trasm = pckt_size * rate / edge["bw"]
+            d_prop = edge["length"] / c
+            qtime = self.network.graph.nodes[u].get("qtime", 0.0)
+            total += d_trasm + d_prop + qtime
+        return total
 
     def diff_score(self, old_path: list[str], new_path: list[str]):
         """

@@ -14,3 +14,4 @@ rustworkx_version/benchmark/*.pdf
 *.log
 *.txt
 networkx_version/benchmark/results
+CLAUDE.md

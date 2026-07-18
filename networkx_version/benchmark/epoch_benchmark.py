@@ -38,14 +38,42 @@ REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
 RESULTS_DIR   = BENCHMARK_DIR / "results"
 
-SEEDS = [104729]# , 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863
+SEEDS = [104729, 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863] 
 TOPOLOGIES     = ["er", "ba", "iaag"]
-SIZES          = [250] # , 500, 750, 1000
-FLOW_FACTORS   = [1.00] # 0.25, 0.50, 0.75, 
+SIZES          = [250, 500, 750, 1000] 
+FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00] 
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
 EPOCHS         = 10
-DEGRADE_FACTOR = (0.7, 1.2)   # severe: bw *= U(0.1, 0.5) each time a link is hit
+DEGRADE_FACTOR = (0.6, 1.2)
 
+
+def _active_routes(kb) -> dict:
+    """Lightweight read-only snapshot of the KB routing state:
+    FlowId -> (PathId, Nodes)."""
+    return {r["FlowId"]: (r["PathId"], r["Nodes"]) for r in kb.get_routings()}
+
+def _compute_metrics(pre:dict, post: dict, engine) -> dict: 
+    """Compare routing state before/after a rerouting pass.
+
+    pre/post: FlowId -> (PathId, Nodes), as returned by _active_routes.
+    - diff_simm_tot: sum of diff_score over all flows
+    - flows_changed: flows whose PathId changed
+    - avg_latency: mean path_latency over flows routed (non-empty path) after
+    """
+    diff_simm_tot = 0
+    flows_changed = 0
+    latencies = []
+    for flow_id, (post_path_id, post_nodes) in post.items():
+        pre_path_id, pre_nodes = pre.get(flow_id, (None, []))
+        diff_simm_tot += engine.diff_score(pre_nodes, post_nodes)
+        if pre_path_id != post_path_id:
+            flows_changed += 1
+        if post_nodes:
+            latencies.append(engine.path_latency(flow_id, post_nodes))
+    avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+    return {"diff_simm_tot": diff_simm_tot,
+            "flows_changed": flows_changed,
+            "avg_latency": avg_latency}
 
 def _run_batch(config_base: dict) -> list:
     """Run all pct_mods (each for EPOCHS cumulative-drift epochs) of one
@@ -154,17 +182,28 @@ def _run_batch(config_base: dict) -> list:
                             if network.graph[u][v]["bw"] < network.graph[u][v]["bw_nominal"])
                         / len(rr_edges)
                     ) if rr_edges else 0.0
+                    
+                    # routing state before reconfiguration
+                    pre_routings = _active_routes(kb)
+                    
 
                     # ── [CR] incremental; its result persists into next epoch ──
                     t0 = time.perf_counter()
                     _, n_ko, n_r = ctrl.continuous_reasoning()
                     t_cr = time.perf_counter() - t0
+                    
+                    cr_routings = _active_routes(kb)
+                    metrics_cr = _compute_metrics(pre_routings, cr_routings, engine)
 
                     # freeze CR trajectory, time FULL as a throwaway, then restore
                     snapshot_cr = kb.snapshot_kb_state()
                     t0 = time.perf_counter()
                     _, n_full_ko, n_full_r = ctrl.full_recompute()
                     t_full = time.perf_counter() - t0
+                    
+                    full_routings = _active_routes(kb) 
+                    metrics_full = _compute_metrics(pre_routings, full_routings, engine)
+                    
                     kb.restore_kb_state(snapshot_cr)
 
                     speedup = t_full / t_cr if t_cr > 0 else float("inf")
@@ -185,6 +224,12 @@ def _run_batch(config_base: dict) -> list:
                         "Speedup":          speedup,
                         "n_links_epoch":    len(selected),
                         "frac_rr_degraded": frac_degraded,
+                        "diff_simm_tot_CR":   metrics_cr["diff_simm_tot"],
+                        "diff_simm_tot_FULL": metrics_full["diff_simm_tot"],
+                        "flows_changed_CR":   metrics_cr["flows_changed"],
+                        "flows_changed_FULL": metrics_full["flows_changed"],
+                        "avg_latency_CR":     metrics_cr["avg_latency"],
+                        "avg_latency_FULL":   metrics_full["avg_latency"],
                         "ok":               True,
                         "error":            "",
                     })

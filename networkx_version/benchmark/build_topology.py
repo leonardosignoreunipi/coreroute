@@ -14,12 +14,12 @@ ROUTER_BW = (100.0, 1000.0) # Router-router link bandwidth range (Mbps)
 # ER/BA/IAAG 
 ACCESS_BW = 50000.0 # host-access link capacity (Mbps): high enough to never constrain routing.
 PCKT_RATE = (1.0, 50.0) # how many packet send per second for a single flow (min, max), requested_bw(flow) = PCKT_SIZE * PCKT_RATE
-MAX_LATENCY = 1e9 # max latency tollerable per flow (seconds)
-RR_LINK_LENGTH = (1, 10) # length range (min, max) for router-router link (km)
-ACCESS_LINK_LENGTH = 1.0 # host-router link length (km)
-QTIME = 0.0 # router queue time 
-SPEED_OF_LIGHT = 300000.0
-PCKT_SIZE = 1.0 # packet size; required_bw = PCKT_SIZE * PCKT_RATE. It's possible set a PCKT_SIZE for each flow
+MAX_LATENCY = 1e9 # max latency tollerable per flow (seconds) range [?]
+RR_LINK_LENGTH = (1, 100) # length range (min, max) for router-router link (km)
+ACCESS_LINK_LENGTH = 1.0 # host-router link length (km) range (1,6)
+QTIME = 0.0 # router queue time range [0.0, 0.05]
+SPEED_OF_LIGHT = 300000.0 #2,6 * 10^8
+PCKT_SIZE = 1.0 # packet size; required_bw = PCKT_SIZE * PCKT_RATE. It's possible set a PCKT_SIZE for each flow 0.012 Mb
 
 # IAAG: link bandwidth range (Mbps) keyed by the unordered pair of endpoint tiers.
 # Node tiers come from networkx.random_internet_as_graph:
