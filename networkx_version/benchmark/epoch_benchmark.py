@@ -1,25 +1,43 @@
 """
-Epoch-based drift benchmark: Continuous Reasoning vs Full Recompute.
+Epoch-based drift benchmark: Continuous Reasoning (CR) vs Full Recompute (FULL).
 
-For each (topology, n, flow_factor, seed) an INIT is done once. Then, for each
-pct_mod, the network is perturbed over EPOCHS epochs with CUMULATIVE drift: every
-epoch degrades a fresh random pct_mod% of router-router links by multiplying their
-CURRENT bandwidth, and the bandwidth is NOT restored between epochs, so damage
-accumulates and the network progressively deteriorates.
+Protocol
+--------
+For each (topology, n, flow_factor, seed) batch:
+  1. Generate the topology, initialize the Prolog KB, route every flow once
+     (INIT via full_recompute) and snapshot that post-init state.
+  2. For each pct_mod: restore bandwidth to nominal and routing to post-init,
+     then drift the network for EPOCHS epochs. Every epoch degrades a fresh
+     random pct_mod share of router-router links by multiplying their CURRENT
+     bandwidth (damage is cumulative: bandwidth is never restored between
+     epochs, so the network progressively decays).
+  3. Every epoch, time continuous_reasoning(); its result PERSISTS into the
+     next epoch (that is the "continuous" in continuous reasoning). Then time
+     full_recompute() as a discarded what-if: snapshot after CR, run FULL,
+     read its outcome, restore the CR snapshot. The two strategies see the
+     exact same perturbation sequence and never contaminate each other.
 
-The CR routing state persists epoch-to-epoch (true continuous reasoning over time):
-continuous_reasoning() at epoch k builds on its own routing from epoch k-1. Full
-Recompute is measured as a discarded "what-if" each epoch (snapshot after CR ->
-time FULL -> restore to the post-CR snapshot), so the two strategies never
-contaminate each other.
+Both strategies are compared against the SAME pre-reconfiguration state of the
+epoch, so per-epoch metrics (symmetric difference, flows changed, mean latency)
+are directly comparable.
 
-Between pct_mods the network is fully reset (bw -> nominal + routing -> post-init).
-One CSV row per (topology, n, flow_factor, seed, pct_mod, epoch).
+Reproducibility
+---------------
+Perturbations are drawn from a PRIVATE random.Random seeded with
+hash((seed, pct_mod)): the perturbation sequence depends only on (seed,
+pct_mod), never on how many random numbers the routing engine consumes.
+(Numeric-tuple hashes are stable across processes; PYTHONHASHSEED only
+affects str/bytes.)
 
-Uses Ray Core (@ray.remote) for parallelism.
+Output
+------
+One CSV row per (topology, n, flow_factor, seed, pct_mod, epoch), with a FIXED
+column schema: failed rows carry the same columns as successful ones (metric
+fields left empty). The CSV is checkpointed after every completed batch.
+
+Uses Ray Core (@ray.remote, max_calls=1) so each batch gets a fresh OS process
+and therefore a fresh embedded Prolog runtime.
 """
-
-#GENERATO DA CLAUDE
 
 import os
 import sys
@@ -38,27 +56,64 @@ REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
 RESULTS_DIR   = BENCHMARK_DIR / "results"
 
-SEEDS = [104729, 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863] 
+SEEDS          = [104729, 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863]
 TOPOLOGIES     = ["er", "ba", "iaag"]
-SIZES          = [250, 500, 750, 1000] 
-FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00] 
+SIZES          = [250, 500, 750, 1000]
+FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
 EPOCHS         = 10
-DEGRADE_FACTOR = (0.6, 1.2)
+DEGRADE_FACTOR = (0.6, 1.2)  # per-hit multiplier range; >1 allows partial recovery, clamped at nominal
+
+# Fixed CSV schema: every row carries every column, so the CSV is always
+# rectangular even when a batch or an epoch fails.
+_ROW_DEFAULTS = {
+    "num_nodes": None, "num_edges": None, "num_flows": None,
+    "T_CR": None, "T_FULL": None,
+    "N_KO_CR": None, "N_R_CR": None, "N_KO_FULL": None, "N_R_FULL": None,
+    "P_KO": None, "P_R": None, "Speedup": None,
+    "n_links_epoch": None, "frac_rr_degraded": None,
+    "diff_simm_tot_CR": None, "flows_changed_CR": None, "avg_latency_CR": None,
+    "diff_simm_tot_FULL": None, "flows_changed_FULL": None, "avg_latency_FULL": None,
+    "ok": False, "error": "",
+}
+
+
+def _make_row(base: dict, pct_mod: float, epoch: int, **values) -> dict:
+    """Build one CSV row with the fixed schema; `values` override the defaults."""
+    row = {**base, "pct_mod": pct_mod, "epoch": epoch, **_ROW_DEFAULTS}
+    row.update(values)
+    return row
+
+
+def _timed(fn):
+    """Run fn() and return (elapsed_seconds, result)."""
+    t0 = time.perf_counter()
+    result = fn()
+    return time.perf_counter() - t0, result
 
 
 def _active_routes(kb) -> dict:
-    """Lightweight read-only snapshot of the KB routing state:
-    FlowId -> (PathId, Nodes)."""
+    """Read-only photo of the KB routing state: FlowId -> (PathId, Nodes)."""
     return {r["FlowId"]: (r["PathId"], r["Nodes"]) for r in kb.get_routings()}
 
-def _compute_metrics(pre:dict, post: dict, engine) -> dict: 
-    """Compare routing state before/after a rerouting pass.
 
-    pre/post: FlowId -> (PathId, Nodes), as returned by _active_routes.
-    - diff_simm_tot: sum of diff_score over all flows
-    - flows_changed: flows whose PathId changed
-    - avg_latency: mean path_latency over flows routed (non-empty path) after
+def _routes_from_snapshot(snapshot: dict) -> dict:
+    """Same photo as _active_routes, but derived from a snapshot_kb_state()
+    dict — guarantees the metrics are computed on exactly the state that the
+    snapshot will restore, with no extra KB query."""
+    nodes_by_path = {p["PathId"]: p["Nodes"] for p in snapshot["paths"]}
+    return {r["FlowId"]: (r["PathId"], nodes_by_path.get(r["PathId"], []))
+            for r in snapshot["routings"]}
+
+
+def _compute_metrics(pre: dict, post: dict, engine) -> dict:
+    """Compare routing state before/after one rerouting pass.
+
+    pre/post: FlowId -> (PathId, Nodes).
+    - diff_simm_tot: sum of diff_score (symmetric edge difference) over all flows
+    - flows_changed: flows whose PathId changed (path interning makes this
+      equivalent to comparing node lists)
+    - avg_latency: mean path_latency over flows with a non-empty path after
     """
     diff_simm_tot = 0
     flows_changed = 0
@@ -70,21 +125,95 @@ def _compute_metrics(pre:dict, post: dict, engine) -> dict:
             flows_changed += 1
         if post_nodes:
             latencies.append(engine.path_latency(flow_id, post_nodes))
-    avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
-    return {"diff_simm_tot": diff_simm_tot,
-            "flows_changed": flows_changed,
-            "avg_latency": avg_latency}
+    return {
+        "diff_simm_tot": diff_simm_tot,
+        "flows_changed": flows_changed,
+        "avg_latency": sum(latencies) / len(latencies) if latencies else 0.0,
+    }
 
-def _run_batch(config_base: dict) -> list:
-    """Run all pct_mods (each for EPOCHS cumulative-drift epochs) of one
-    (topology, n, flow_factor, seed) combination. INIT is done once; each pct_mod
-    starts from the post-init state, then drifts over its epochs.
 
-    `pct_mods` and `epochs` can be overridden via config_base (used for testing);
-    they default to the module-level PCT_MODS / EPOCHS.
-    """
-    logging.basicConfig(level=logging.WARNING)
+def _apply_bandwidth(network, kb, changes: list[tuple]) -> None:
+    """The ONLY place that mutates link bandwidth: applies (u, v, new_bw)
+    to the NetworkX graph and mirrors it into the Prolog KB, keeping the two
+    routing stages (Python prefilter / Prolog authoritative check) in sync."""
+    for (u, v, new_bw) in changes:
+        network.graph[u][v]["bw"] = new_bw
+    if changes:
+        kb.update_links_bandwidth(changes)
 
+
+def _reset_to_nominal(network, kb, rr_edges: list[tuple]) -> None:
+    """Undo all accumulated drift: bandwidth of every rr link -> bw_nominal."""
+    changes = [
+        (u, v, network.graph[u][v]["bw_nominal"])
+        for (u, v) in rr_edges
+        if network.graph[u][v]["bw"] != network.graph[u][v]["bw_nominal"]
+    ]
+    _apply_bandwidth(network, kb, changes)
+
+
+def _perturb_epoch(network, kb, rr_edges: list[tuple], pct_mod: float,
+                   rng: random.Random) -> int:
+    """One epoch of cumulative drift: degrade a fresh random pct_mod share of
+    rr links by multiplying their CURRENT bandwidth (clamped at nominal).
+    Returns the number of links hit."""
+    n_mod    = max(1, int(pct_mod * len(rr_edges)))
+    selected = rng.sample(rr_edges, min(n_mod, len(rr_edges)))
+    changes  = []
+    for (u, v) in selected:
+        data   = network.graph[u][v]
+        new_bw = min(data["bw"] * rng.uniform(*DEGRADE_FACTOR), data["bw_nominal"])
+        changes.append((u, v, new_bw))
+    _apply_bandwidth(network, kb, changes)
+    return len(selected)
+
+
+def _frac_degraded(network, rr_edges: list[tuple]) -> float:
+    """Fraction of rr links currently below nominal bandwidth (drift progress)."""
+    if not rr_edges:
+        return 0.0
+    below = sum(1 for (u, v) in rr_edges
+                if network.graph[u][v]["bw"] < network.graph[u][v]["bw_nominal"])
+    return below / len(rr_edges)
+
+
+def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
+    """One drift epoch: perturb, measure CR (persists), measure FULL (what-if,
+    discarded). All KB reads happen OUTSIDE the timed sections; both strategies
+    are compared against the same pre-reconfiguration state."""
+    n_links = _perturb_epoch(network, kb, rr_edges, pct_mod, rng)
+    frac    = _frac_degraded(network, rr_edges)
+    pre     = _active_routes(kb)
+
+    # CR: incremental; its result persists into the next epoch
+    t_cr, (_, n_ko, n_r) = _timed(ctrl.continuous_reasoning)
+    snapshot_cr = kb.snapshot_kb_state()          # freezes the CR trajectory
+    metrics_cr  = _compute_metrics(pre, _routes_from_snapshot(snapshot_cr), engine)
+
+    # FULL: throwaway what-if, measured then discarded
+    t_full, (_, n_full_ko, n_full_r) = _timed(ctrl.full_recompute)
+    metrics_full = _compute_metrics(pre, _active_routes(kb), engine)
+    kb.restore_kb_state(snapshot_cr)
+
+    return {
+        "T_CR": t_cr, "T_FULL": t_full,
+        "N_KO_CR": n_ko, "N_R_CR": n_r,
+        "N_KO_FULL": n_full_ko, "N_R_FULL": n_full_r,
+        "Speedup": t_full / t_cr if t_cr > 0 else float("inf"),
+        "n_links_epoch": n_links,
+        "frac_rr_degraded": frac,
+        "diff_simm_tot_CR":   metrics_cr["diff_simm_tot"],
+        "flows_changed_CR":   metrics_cr["flows_changed"],
+        "avg_latency_CR":     metrics_cr["avg_latency"],
+        "diff_simm_tot_FULL": metrics_full["diff_simm_tot"],
+        "flows_changed_FULL": metrics_full["flows_changed"],
+        "avg_latency_FULL":   metrics_full["avg_latency"],
+    }
+
+
+def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: str):
+    """Generate the topology and build the full stack (network, kb, engine,
+    ctrl), initialize the KB and run the INIT full_recompute."""
     # lazy imports: each Ray worker has its own Python state and Prolog runtime
     sys.path.insert(0, str(REPO_ROOT))
     sys.path.insert(0, str(BENCHMARK_DIR))
@@ -95,6 +224,32 @@ def _run_batch(config_base: dict) -> list:
     from RoutingEngine   import RoutingEngine as Engine
     from JanusKB         import JanusKB as PrologKB
 
+    random.seed(seed)  # topology generation uses the global RNG
+    generate_sdn_topology(graph_type=topology, num_nodes=n,
+                          num_flows=num_flows, filename=topo_file, seed=seed)
+
+    cfg     = ConfigLoader(topo_file).load()
+    network = Net(cfg)
+    kb      = PrologKB(cfg, KB_FILE)
+    engine  = Engine(network, kb, cfg)
+    ctrl    = SDNcontroller(network, kb, cfg, engine)
+
+    kb.clear_kb()
+    kb.initialize_kb()
+    ctrl.full_recompute()  # INIT: route every flow once
+    return network, kb, engine, ctrl
+
+
+def _run_batch(config_base: dict) -> list:
+    """Run all pct_mods (each for EPOCHS cumulative-drift epochs) of one
+    (topology, n, flow_factor, seed) combination. INIT is done once; each
+    pct_mod restarts from the post-init state, then drifts over its epochs.
+
+    `pct_mods` and `epochs` can be overridden via config_base (used for
+    manual testing); they default to the module-level PCT_MODS / EPOCHS.
+    """
+    logging.basicConfig(level=logging.WARNING)
+
     topology    = config_base["topology"]
     n           = config_base["n"]
     flow_factor = config_base["flow_factor"]
@@ -103,152 +258,56 @@ def _run_batch(config_base: dict) -> list:
     pct_mods    = config_base.get("pct_mods", PCT_MODS)
     epochs      = config_base.get("epochs", EPOCHS)
 
-    topo_file = None
+    base = {"topology": topology, "n": n, "flow_factor": flow_factor, "seed": seed}
     results   = []
+    topo_file = None
 
     try:
-        # ── generate topology ─────────────────────────────────────────────
-        random.seed(seed)
         fd, topo_file = tempfile.mkstemp(suffix=".json")
         os.close(fd)
-        generate_sdn_topology(
-            graph_type=topology, num_nodes=n,
-            num_flows=num_flows, filename=topo_file, seed=seed,
-        )
-
-        cfg     = ConfigLoader(topo_file).load()
-        network = Net(cfg)
-        kb      = PrologKB(cfg, KB_FILE)
-        engine  = Engine(network, kb, cfg)
-        ctrl    = SDNcontroller(network, kb, cfg, engine)
-
-        kb.clear_kb()
-        kb.initialize_kb()
+        network, kb, engine, ctrl = _build_system(topology, n, num_flows, seed, topo_file)
 
         num_nodes = len(network.graph.nodes)
         num_edges = len(network.graph.edges)
+        sizes = {"num_nodes": num_nodes, "num_edges": num_edges, "num_flows": num_flows}
 
-        # ── [INIT] once for the whole batch ───────────────────────────────
-        ctrl.full_recompute()
+        # router-router edges; string-prefix coupling to the h*/r* naming
+        rr_edges = [(u, v) for u, v in network.graph.edges()
+                    if not (u.startswith("h") or v.startswith("h"))]
 
-        # router-router edges (label pairs), invariant for the whole batch
-        rr_edges = [
-            (u, v) for u, v in network.graph.edges()
-            if not (u.startswith("h") or v.startswith("h"))
-        ]
-
-        # snapshot of the post-init state (routing + paths), restored before each pct_mod
         post_init_snapshot = kb.snapshot_kb_state()
 
         for pct_mod in pct_mods:
-            # ── reset to a clean network before each pct_mod ──────────────
-            # bw -> nominal (undo the previous pct_mod's accumulated drift) ...
-            reset = []
-            for (u, v) in rr_edges:
-                data = network.graph[u][v]
-                if data["bw"] != data["bw_nominal"]:
-                    data["bw"] = data["bw_nominal"]
-                    reset.append((u, v, data["bw_nominal"]))
-            if reset:
-                kb.update_links_bandwidth(reset)
-            # ... and routing/paths -> post-init
+            # clean restart: bandwidth -> nominal, routing -> post-init
+            _reset_to_nominal(network, kb, rr_edges)
             kb.restore_kb_state(post_init_snapshot)
 
-            # reproducible epoch sequence for each (seed, pct_mod)
-            random.seed(hash((seed, pct_mod)) % (2**32))
+            # private RNG: the perturbation sequence is a function of
+            # (seed, pct_mod) only, independent of the engine's RNG usage
+            rng = random.Random(hash((seed, pct_mod)) % (2**32))
 
             for epoch in range(epochs):
-                config = {**config_base, "pct_mod": pct_mod, "epoch": epoch}
-                config.pop("pct_mods", None)
-                config.pop("epochs", None)
                 try:
-                    # ── [PERTURB — cumulative drift] ──────────────────────
-                    # degrade a fresh random pct_mod% subset of rr links by
-                    # multiplying their CURRENT bw (damage stacks, coverage grows)
-                    n_mod    = max(1, int(pct_mod * len(rr_edges)))
-                    selected = random.sample(rr_edges, min(n_mod, len(rr_edges)))
-                    degraded = []
-                    for (u, v) in selected:
-                        data = network.graph[u][v]
-                        new_bw = data["bw"] * random.uniform(*DEGRADE_FACTOR)
-                        if new_bw > data["bw_nominal"]: new_bw = data["bw_nominal"]
-                        data["bw"] = new_bw
-                        degraded.append((u, v, new_bw))
-                    kb.update_links_bandwidth(degraded)
-
-                    # fraction of rr links currently below nominal (drift progress)
-                    frac_degraded = (
-                        sum(1 for (u, v) in rr_edges
-                            if network.graph[u][v]["bw"] < network.graph[u][v]["bw_nominal"])
-                        / len(rr_edges)
-                    ) if rr_edges else 0.0
-                    
-                    # routing state before reconfiguration
-                    pre_routings = _active_routes(kb)
-                    
-
-                    # ── [CR] incremental; its result persists into next epoch ──
-                    t0 = time.perf_counter()
-                    _, n_ko, n_r = ctrl.continuous_reasoning()
-                    t_cr = time.perf_counter() - t0
-                    
-                    cr_routings = _active_routes(kb)
-                    metrics_cr = _compute_metrics(pre_routings, cr_routings, engine)
-
-                    # freeze CR trajectory, time FULL as a throwaway, then restore
-                    snapshot_cr = kb.snapshot_kb_state()
-                    t0 = time.perf_counter()
-                    _, n_full_ko, n_full_r = ctrl.full_recompute()
-                    t_full = time.perf_counter() - t0
-                    
-                    full_routings = _active_routes(kb) 
-                    metrics_full = _compute_metrics(pre_routings, full_routings, engine)
-                    
-                    kb.restore_kb_state(snapshot_cr)
-
-                    speedup = t_full / t_cr if t_cr > 0 else float("inf")
-
-                    results.append({
-                        **config,
-                        "num_nodes":        num_nodes,
-                        "num_edges":        num_edges,
-                        "num_flows":        num_flows,
-                        "T_CR":             t_cr,
-                        "T_FULL":           t_full,
-                        "N_KO_CR":          n_ko,
-                        "N_R_CR":           n_r,
-                        "N_KO_FULL":        n_full_ko,
-                        "N_R_FULL":         n_full_r,
-                        "P_KO":             n_ko / num_flows if num_flows > 0 else 0.0,
-                        "P_R":              n_r  / num_flows if num_flows > 0 else 0.0,
-                        "Speedup":          speedup,
-                        "n_links_epoch":    len(selected),
-                        "frac_rr_degraded": frac_degraded,
-                        "diff_simm_tot_CR":   metrics_cr["diff_simm_tot"],
-                        "diff_simm_tot_FULL": metrics_full["diff_simm_tot"],
-                        "flows_changed_CR":   metrics_cr["flows_changed"],
-                        "flows_changed_FULL": metrics_full["flows_changed"],
-                        "avg_latency_CR":     metrics_cr["avg_latency"],
-                        "avg_latency_FULL":   metrics_full["avg_latency"],
-                        "ok":               True,
-                        "error":            "",
-                    })
-
+                    measures = _run_epoch(network, kb, engine, ctrl,
+                                          rr_edges, pct_mod, rng)
+                    p_ko = measures["N_KO_CR"] / num_flows if num_flows > 0 else 0.0
+                    p_r  = measures["N_R_CR"]  / num_flows if num_flows > 0 else 0.0
+                    results.append(_make_row(base, pct_mod, epoch, **sizes,
+                                             **measures, P_KO=p_ko, P_R=p_r,
+                                             ok=True))
                 except Exception as e:
-                    # drift state is now inconsistent; record and move to the next
-                    # pct_mod, which resets cleanly
-                    results.append({**config, "ok": False, "error": str(e)})
+                    # drift state is now inconsistent: record the failure and
+                    # move to the next pct_mod, which restarts cleanly
+                    results.append(_make_row(base, pct_mod, epoch,
+                                             ok=False, error=str(e)))
                     break
 
     except Exception as e:
-        # error during init/snapshot: every (pct_mod, epoch) of the batch fails
+        # setup/INIT failed: every (pct_mod, epoch) of the batch fails
         for pct_mod in pct_mods:
             for epoch in range(epochs):
-                results.append({
-                    "topology": topology, "n": n, "flow_factor": flow_factor,
-                    "seed": seed, "pct_mod": pct_mod, "epoch": epoch,
-                    "ok": False, "error": f"Init failed: {e}",
-                })
+                results.append(_make_row(base, pct_mod, epoch,
+                                         ok=False, error=f"Init failed: {e}"))
 
     finally:
         if topo_file and os.path.exists(topo_file):
@@ -265,11 +324,10 @@ if __name__ == "__main__":
     RESULTS_DIR.mkdir(exist_ok=True)
     NUM_WORKERS = 4
 
-    OUTPUT_CSV = sys.argv[1] if len(sys.argv) > 1 else "benchmark_epoch_drift.csv"
+    OUTPUT_CSV = sys.argv[1] if len(sys.argv) > 1 else "benchmark.csv"
 
     ray.init(num_cpus=NUM_WORKERS)
 
-    # 480 batches: pct_mod and epoch are expanded inside each batch
     all_configs = [
         {"topology": t, "n": n, "flow_factor": ff, "seed": s}
         for t, n, ff, s in itertools.product(TOPOLOGIES, SIZES, FLOW_FACTORS, SEEDS)
@@ -281,9 +339,8 @@ if __name__ == "__main__":
 
     # sliding window: keeps exactly NUM_WORKERS batches active
     config_iter = iter(all_configs)
-    active      = []
-    for cfg in itertools.islice(config_iter, NUM_WORKERS):
-        active.append(run_trial_batch.remote(cfg))
+    active      = [run_trial_batch.remote(cfg)
+                   for cfg in itertools.islice(config_iter, NUM_WORKERS)]
 
     results      = []
     done_batches = 0
@@ -295,16 +352,15 @@ if __name__ == "__main__":
         done_batches += 1
         results.extend(batch_results)
 
-        b0 = batch_results[0]
+        b0   = batch_results[0]
         n_ok = sum(1 for r in batch_results if r.get("ok"))
         print(f"  [batch {done_batches}/{total_batches}] "
               f"topo={b0['topology']} n={b0['n']} ff={b0['flow_factor']} seed={b0['seed']} "
               f"→ {n_ok}/{len(batch_results)} rows ok")
 
-        # checkpoint: save the partial CSV after every batch
+        # checkpoint: rewrite the partial CSV after every completed batch
         pd.DataFrame(results).to_csv(csv_out, index=False)
 
-        # submit the next batch as soon as a slot frees up
         next_cfg = next(config_iter, None)
         if next_cfg is not None:
             active.append(run_trial_batch.remote(next_cfg))
