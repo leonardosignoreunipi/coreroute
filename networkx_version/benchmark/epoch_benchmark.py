@@ -61,8 +61,8 @@ TOPOLOGIES     = ["er", "ba", "iaag"]
 SIZES          = [250, 500, 750, 1000]
 FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
-EPOCHS         = 20
-DEGRADE_FACTOR = (0.6, 1.2)  # per-hit multiplier range; >1 allows partial recovery, clamped at nominal
+EPOCHS         = 12
+DEGRADE_FACTOR = (0.4, 1.2)  # per-hit multiplier range; >1 allows partial recovery, clamped at nominal
 
 # Fixed CSV schema: every row carries every column, so the CSV is always
 # rectangular even when a batch or an epoch fails.
@@ -102,8 +102,7 @@ def _routes_from_snapshot(snapshot: dict) -> dict:
     dict — guarantees the metrics are computed on exactly the state that the
     snapshot will restore, with no extra KB query."""
     nodes_by_path = {p["PathId"]: p["Nodes"] for p in snapshot["paths"]}
-    return {r["FlowId"]: (r["PathId"], nodes_by_path.get(r["PathId"], []))
-            for r in snapshot["routings"]}
+    return {r["FlowId"]: (r["PathId"], nodes_by_path.get(r["PathId"], [])) for r in snapshot["routings"]}
 
 
 def _compute_metrics(pre: dict, post: dict, engine) -> dict:
@@ -177,38 +176,55 @@ def _frac_degraded(network, rr_edges: list[tuple]) -> float:
     return below / len(rr_edges)
 
 
-def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
-    """One drift epoch: perturb, measure CR (persists), measure FULL (what-if,
-    discarded). All KB reads happen OUTSIDE the timed sections; both strategies
-    are compared against the same pre-reconfiguration state."""
+def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: bool) -> dict:
+    """One drift epoch: perturb, measure CR (persists into the next epoch).
+
+    The FULL what-if is measured only when `measure_full` is True (last epoch
+    of each pct sequence): its cost is state-independent (T_FULL constant
+    within 1-2% across epochs, see probes), so one sample per sequence
+    suffices. When skipped, no snapshot/restore is needed — there is nothing
+    to undo — and the CR trajectory is bit-identical either way. All KB reads
+    happen OUTSIDE the timed sections."""
     n_links = _perturb_epoch(network, kb, rr_edges, pct_mod, rng)
     frac    = _frac_degraded(network, rr_edges)
     pre     = _active_routes(kb)
 
     # CR: incremental; its result persists into the next epoch
     t_cr, (_, n_ko, n_r) = _timed(ctrl.continuous_reasoning)
-    snapshot_cr = kb.snapshot_kb_state()          # freezes the CR trajectory
-    metrics_cr  = _compute_metrics(pre, _routes_from_snapshot(snapshot_cr), engine)
 
-    # FULL: throwaway what-if, measured then discarded
-    t_full, (_, n_full_ko, n_full_r) = _timed(ctrl.full_recompute)
-    metrics_full = _compute_metrics(pre, _active_routes(kb), engine)
-    kb.restore_kb_state(snapshot_cr)
-
-    return {
-        "T_CR": t_cr, "T_FULL": t_full,
+    measures = {
+        "T_CR": t_cr,
         "N_KO_CR": n_ko, "N_R_CR": n_r,
-        "N_KO_FULL": n_full_ko, "N_R_FULL": n_full_r,
-        "Speedup": t_full / t_cr if t_cr > 0 else float("inf"),
         "n_links_epoch": n_links,
         "frac_rr_degraded": frac,
-        "diff_simm_tot_CR":   metrics_cr["diff_simm_tot"],
-        "flows_changed_CR":   metrics_cr["flows_changed"],
-        "avg_latency_CR":     metrics_cr["avg_latency"],
-        "diff_simm_tot_FULL": metrics_full["diff_simm_tot"],
-        "flows_changed_FULL": metrics_full["flows_changed"],
-        "avg_latency_FULL":   metrics_full["avg_latency"],
     }
+
+    if measure_full:
+        snapshot_cr = kb.snapshot_kb_state()          # freezes the CR trajectory
+        metrics_cr  = _compute_metrics(pre, _routes_from_snapshot(snapshot_cr), engine)
+
+        # FULL: throwaway what-if, measured then discarded
+        t_full, (_, n_full_ko, n_full_r) = _timed(ctrl.full_recompute)
+        metrics_full = _compute_metrics(pre, _active_routes(kb), engine)
+        kb.restore_kb_state(snapshot_cr)
+
+        measures.update({
+            "T_FULL": t_full,
+            "N_KO_FULL": n_full_ko, "N_R_FULL": n_full_r,
+            "Speedup": t_full / t_cr if t_cr > 0 else float("inf"),
+            "diff_simm_tot_FULL": metrics_full["diff_simm_tot"],
+            "flows_changed_FULL": metrics_full["flows_changed"],
+            "avg_latency_FULL":   metrics_full["avg_latency"],
+        })
+    else:
+        metrics_cr = _compute_metrics(pre, _active_routes(kb), engine)
+
+    measures.update({
+        "diff_simm_tot_CR": metrics_cr["diff_simm_tot"],
+        "flows_changed_CR": metrics_cr["flows_changed"],
+        "avg_latency_CR":   metrics_cr["avg_latency"],
+    })
+    return measures
 
 
 def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: str):
@@ -272,8 +288,7 @@ def _run_batch(config_base: dict) -> list:
         sizes = {"num_nodes": num_nodes, "num_edges": num_edges, "num_flows": num_flows}
 
         # router-router edges; string-prefix coupling to the h*/r* naming
-        rr_edges = [(u, v) for u, v in network.graph.edges()
-                    if not (u.startswith("h") or v.startswith("h"))]
+        rr_edges = [(u, v) for u, v in network.graph.edges() if not (u.startswith("h") or v.startswith("h"))]
 
         post_init_snapshot = kb.snapshot_kb_state()
 
@@ -288,26 +303,21 @@ def _run_batch(config_base: dict) -> list:
 
             for epoch in range(epochs):
                 try:
-                    measures = _run_epoch(network, kb, engine, ctrl,
-                                          rr_edges, pct_mod, rng)
+                    measures = _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full = (epoch == epochs - 1))
                     p_ko = measures["N_KO_CR"] / num_flows if num_flows > 0 else 0.0
                     p_r  = measures["N_R_CR"]  / num_flows if num_flows > 0 else 0.0
-                    results.append(_make_row(base, pct_mod, epoch, **sizes,
-                                             **measures, P_KO=p_ko, P_R=p_r,
-                                             ok=True))
+                    results.append(_make_row(base, pct_mod, epoch, **sizes, **measures, P_KO=p_ko, P_R=p_r, ok=True))
                 except Exception as e:
                     # drift state is now inconsistent: record the failure and
                     # move to the next pct_mod, which restarts cleanly
-                    results.append(_make_row(base, pct_mod, epoch,
-                                             ok=False, error=str(e)))
+                    results.append(_make_row(base, pct_mod, epoch, ok=False, error=str(e)))
                     break
 
     except Exception as e:
         # setup/INIT failed: every (pct_mod, epoch) of the batch fails
         for pct_mod in pct_mods:
             for epoch in range(epochs):
-                results.append(_make_row(base, pct_mod, epoch,
-                                         ok=False, error=f"Init failed: {e}"))
+                results.append(_make_row(base, pct_mod, epoch, ok=False, error=f"Init failed: {e}"))
 
     finally:
         if topo_file and os.path.exists(topo_file):
