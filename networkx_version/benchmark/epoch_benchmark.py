@@ -322,7 +322,7 @@ run_trial_batch = ray.remote(num_cpus=1, max_calls=1)(_run_batch)
 if __name__ == "__main__":
     os.environ["RAY_local_fs_capacity_threshold"] = "0.99"
     RESULTS_DIR.mkdir(exist_ok=True)
-    NUM_WORKERS = 4
+    NUM_WORKERS = 7
 
     OUTPUT_CSV = sys.argv[1] if len(sys.argv) > 1 else "benchmark.csv"
 
