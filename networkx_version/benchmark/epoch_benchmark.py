@@ -61,7 +61,7 @@ TOPOLOGIES     = ["er", "ba", "iaag"]
 SIZES          = [250, 500, 750, 1000]
 FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
-EPOCHS         = 10
+EPOCHS         = 20
 DEGRADE_FACTOR = (0.6, 1.2)  # per-hit multiplier range; >1 allows partial recovery, clamped at nominal
 
 # Fixed CSV schema: every row carries every column, so the CSV is always

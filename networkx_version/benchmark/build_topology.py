@@ -7,31 +7,37 @@ import logging
 
 logger = logging.getLogger(__name__)
 
-# ER/BA 
-HOST_FRACTION = 0.10 # 10% of the total nodes are hosts, the rest are routers.
-ROUTER_BW = (100.0, 1000.0) # Router-router link bandwidth range (Mbps)
+# Realistic parameter set (metro/enterprise SDN scenario). What governs benchmark
+# behaviour is the flow-demand / link-capacity RATIO (Dtrasm = required_bw/bw,
+# contention, pruning): capacities and rates are scaled by the same x10 factor
+# w.r.t. the exploratory runs, so contention and latency distributions are
+# unchanged while absolute values match modern hardware.
 
-# ER/BA/IAAG 
-ACCESS_BW = 50000.0 # host-access link capacity (Mbps): high enough to never constrain routing.
-PCKT_RATE = (1.0, 50.0) # how many packet send per second for a single flow (min, max), requested_bw(flow) = PCKT_SIZE * PCKT_RATE
-MAX_LATENCY = 1e9 # max latency tollerable per flow (seconds) range [?]
-RR_LINK_LENGTH = (1, 100) # length range (min, max) for router-router link (km)
-ACCESS_LINK_LENGTH = 1.0 # host-router link length (km) range (1,6)
-QTIME = 0.0 # router queue time range [0.0, 0.05]
-SPEED_OF_LIGHT = 300000.0 #2,6 * 10^8
-PCKT_SIZE = 1.0 # packet size; required_bw = PCKT_SIZE * PCKT_RATE. It's possible set a PCKT_SIZE for each flow 0.012 Mb
+# ER/BA
+HOST_FRACTION = 0.10 # 10% of the total nodes are hosts, the rest are routers (modeling choice: hosts are aggregated service attachment points, the focus is the router core).
+ROUTER_BW = (1000.0, 10000.0) # Router-router link bandwidth range (Mbps): 1-10 Gbps core links, modern metro/enterprise standard.
+
+# ER/BA/IAAG
+ACCESS_BW = 100000.0 # host-access link capacity (Mbps): 100 Gbps server/DC NIC, over-provisioned by design so access links never constrain routing.
+PCKT_RATE = (1000.0, 40000.0) # packets/s per flow (min, max); required_bw = PCKT_SIZE * PCKT_RATE = 12-480 Mbps (HD/4K video up to elephant flows). 480 Mbps at 1500 B/pckt is exactly 40000 pkt/s.
+MAX_LATENCY_RANGE = (0.5, 2.0) # per-flow max tolerable latency (s), drawn uniform. ACTIVE constraint: calibrated on the nominal path-latency distribution (~P90*1.5, P99*3) so it is satisfiable at nominal load but binds under cumulative degradation.
+RR_LINK_LENGTH = (1, 100) # length range (min, max) for router-router link (km): metro/regional backbone.
+ACCESS_LINK_LENGTH = 1.0 # host-router link length (km): campus/DC access span.
+QTIME = 0.002 # router queueing delay (s): 2 ms per hop, typical value.
+SPEED_OF_LIGHT = 200000.0 # km/s: light in fiber (n~1.5), i.e. 5 us/km.
+PCKT_SIZE = 0.012 # packet size (Mb): 1500-byte Ethernet MTU frame. It's possible to set a PCKT_SIZE per flow.
 
 # IAAG: link bandwidth range (Mbps) keyed by the unordered pair of endpoint tiers.
 # Node tiers come from networkx.random_internet_as_graph:
 #   T  = transit / tier-1, M = mid-level, CP = content provider, C = customer.
-# Hierarchical scale: backbone (T-T) very high, customer access (C-C) low.
+# Hierarchical scale: tier-1 backbone 10-100 Gbps, aggregation 2-20 Gbps.
 IAAG_BW_TIERS = {
-    frozenset({"T", "T"}):   (1000.0, 10000.0),
-    frozenset({"T", "CP"}):  (1000.0, 5000.0),
-    frozenset({"CP", "CP"}): (1000.0, 5000.0),
-    frozenset({"T", "M"}):   (500.0, 2000.0),
-    frozenset({"M", "CP"}):  (500.0, 2000.0),
-    frozenset({"M", "M"}):   (200.0, 1000.0),
+    frozenset({"T", "T"}):   (10000.0, 100000.0),
+    frozenset({"T", "CP"}):  (10000.0, 50000.0),
+    frozenset({"CP", "CP"}): (10000.0, 50000.0),
+    frozenset({"T", "M"}):   (5000.0, 20000.0),
+    frozenset({"M", "CP"}):  (5000.0, 20000.0),
+    frozenset({"M", "M"}):   (2000.0, 10000.0),
 }
 
 
@@ -213,7 +219,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
             "id": flow_id,
             "src_service": hosts[src_idx]["services"][0],
             "dst_service": hosts[dst_idx]["services"][0],
-            "max_latency": MAX_LATENCY,
+            "max_latency": float(random.uniform(*MAX_LATENCY_RANGE)),
             "rate": float(random.uniform(*PCKT_RATE))
         })
         # Use "_init" suffix to prevent naming collisions with paths generated

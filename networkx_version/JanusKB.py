@@ -33,10 +33,10 @@ class JanusKB:
         Remove all dynamic facts from the Prolog runtime.
         Must be called between trials that share the same OS process (e.g. Ray workers).
         """
+        facts = ["host(_,_)", "router(_,_)", "link(_,_,_,_)", "path(_,_,_,_)", "flow(_,_,_,_,_)", "routing(_,_)", "pathsCandidates(_,_)", "speedOfLight(_)", "pcktSize(_,_)"]
         try:
-            for pred in ["host/2", "router/2", "link/4", "path/4", "flow/5",
-                         "routing/2", "pathsCandidates/2", "speedOfLight/1", "pcktSize/2"]:
-                j.query_once(f"retractall({pred})")
+            for f in facts:
+                j.query_once(f"retractall({f})")
         except Exception as e:
             logger.warning(f"clear_kb warning: {e}")
 
