@@ -35,6 +35,7 @@ class RoutingEngine:
         self.kb = kb
         self.config = config
         self._pr = pr()
+        self.STRATEGY = self.biased_k_shortest_path_latency
         
     def path_latency(self, flow_id: str, nodes: list[str]) -> float:
         """
@@ -177,7 +178,7 @@ class RoutingEngine:
             required_bw = self.config.flows[flowId].required_bw(self.config.pckt_size)
             graph_pruned = self.network.pruning_per_bandwidth(required_bw)
             
-            candidates = self.exhaustive_paths(graph_pruned, src, dst, flowId, old_path)
+            candidates = self.STRATEGY(graph_pruned, src, dst, flowId, old_path)
             
             if len(candidates) == 0:
                 logger.warning(f"Not valid paths for flow: {flowId}")
@@ -236,10 +237,81 @@ class RoutingEngine:
             
         candidates.sort(key=lambda x: x[0])
         
-        logger.info(f"search_candidates2: flow={flow_id} candidates_length={len(candidates)} paths")
+        logger.info(f"biased_k_shortest_path: flow={flow_id} candidates_length={len(candidates)} paths")
         
         return candidates
     
+    
+    def biased_k_shortest_path_latency(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
+        """
+        Same candidate generation as biased_k_shortest_path (K=10, W(0/2)
+        biased toward the old path), but ordered by (diff_score, path_latency)
+        instead of diff_score alone.
+
+        Isolates the effect of the latency tie-break against
+        biased_k_shortest_path: same candidate set, different ordering.
+
+        Returns a list of (score, path_nodes) tuples, sorted by
+        (score, latency). Empty if no path exists between src and dst.
+        """
+        K = 10
+        
+        old_path_edges = set(zip(old_path[:-1], old_path[1:])) if old_path else set()
+        
+        def weight_fn (u, v, d): 
+            if (u,v) in old_path_edges :
+                return 0
+            else: return 2
+            
+        tmp_candidates = []
+        try:
+            for c in nx.shortest_simple_paths(graph_pruned, source=src, target=dst, weight=weight_fn):
+                score = self.diff_score(old_path, c)
+                latency = self.path_latency(flow_id, c)
+                tmp_candidates.append((score, latency, c))
+                if len(tmp_candidates) >= K:
+                    break
+        except nx.NetworkXNoPath:
+            logger.warning(f"No path found for flow {flow_id} from {src} to {dst}")
+            return []
+            
+        tmp_candidates.sort(key=lambda x: (x[0], x[1]))
+        
+        logger.info(f"biased_k_shortest_path_latency: flow={flow_id} candidates_length={len(tmp_candidates)} paths")
+        
+        candidates = [(p[0], p[2]) for p in tmp_candidates]
+        
+        return candidates
+    
+    def latency_biased_paths(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
+        TOP_N = 100
+        K = 10
+
+        rate = self.config.flows[flow_id].rate
+        pckt_size = self.config.pckt_size
+        speed_of_light = self.config.speed_of_light
+
+        def weight_fn(u, v, edge_data):
+            d_trasm = pckt_size * rate / edge_data["bw"]
+            d_prop = edge_data["length"] / speed_of_light
+            qtime = self.network.graph.nodes[u].get("qtime", 0.0)
+            return d_trasm + d_prop + qtime
+        
+        candidates = []
+        try: 
+            for c in nx.shortest_simple_paths(graph_pruned, source=src, target=dst, weight=weight_fn):
+                score = self.diff_score(old_path, c)
+                candidates.append((score, c))
+                if len(candidates) >= TOP_N:
+                    break
+        except nx.NetworkXNoPath: 
+            logger.warning(f"No path found for flow {flow_id} from {src} to {dst}")
+            return []
+        
+        logger.info(f"latency_biased_paths: flow={flow_id} candidates_length={len(candidates)} paths")
+        
+        candidates.sort(key=lambda x: x[0])
+        return candidates[:K]            
     
     def exhaustive_paths(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
         """
@@ -270,10 +342,10 @@ class RoutingEngine:
             score = self.diff_score(old_path, c)
             latency = self.path_latency(flow_id, c)
             tmp_candidates.append((score, latency, c))
-        logger.info(f"search_candidates2: flow={flow_id} candidates_length={len(tmp_candidates)} paths")    
+        logger.info(f"exhaustive_paths: flow={flow_id} candidates_length={len(tmp_candidates)} paths")    
         
         tmp_candidates.sort(key=lambda x: (x[0], x[1]))
         
         candidates = [(p[0], p[2]) for p in tmp_candidates] #uniform in couples for re_rorouting 
                 
-        return candidates    
+        return candidates
