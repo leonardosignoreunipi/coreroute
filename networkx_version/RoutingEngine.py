@@ -35,7 +35,7 @@ class RoutingEngine:
         self.kb = kb
         self.config = config
         self._pr = pr()
-        self.STRATEGY = self.biased_k_shortest_path_latency
+        self.STRATEGY = self.latency_biased_paths
         
     def path_latency(self, flow_id: str, nodes: list[str]) -> float:
         """
