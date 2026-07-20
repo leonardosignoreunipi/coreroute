@@ -143,13 +143,15 @@ class RoutingEngine:
             ko_flows: routings to (re)allocate.
 
         Returns:
-            (new_valid_routings, failed_routings) from query_cr_routings.
-            If ko_flows is empty, returns (ok_flows, []).
+            (new_valid_routings, failed_routings, no_path_count) — no_path_count
+            is the number of ko-flows with zero Stage-1 candidates (src/dst
+            disconnected in the pruned graph). If ko_flows is empty, returns
+            (ok_flows, [], 0).
         """
         
         if len(ko_flows) == 0:
             logger.info("No koFlows")
-            return ok_flows, []
+            return ok_flows, [], 0
 
         flowsNodes = {r.flow_id: self.kb.get_path_by_id(r.path_id) for r in ko_flows}
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
@@ -157,6 +159,8 @@ class RoutingEngine:
 
         paths = self.kb.get_all_paths()
         self._pr.load_paths(paths) #load all current paths in a dictonary
+        
+        no_path_count = 0
         
         while len(temp_koflows) > 0:
             routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
@@ -173,10 +177,11 @@ class RoutingEngine:
             required_bw = self.config.flows[flowId].required_bw(self.config.pckt_size)
             graph_pruned = self.network.pruning_per_bandwidth(required_bw)
             
-            candidates = self.biased_k_shortest_path(graph_pruned, src, dst, flowId, old_path)
-
+            candidates = self.exhaustive_paths(graph_pruned, src, dst, flowId, old_path)
+            
             if len(candidates) == 0:
                 logger.warning(f"Not valid paths for flow: {flowId}")
+                no_path_count += 1
             pathsIds = []
 
             for (_, nodes) in candidates:
@@ -186,11 +191,12 @@ class RoutingEngine:
             
             self.kb.put_candidates_paths(flowId, pathsIds)
             
-        return self.kb.query_cr_routings(ko_flows, ok_flows)
+        new_valid, failed = self.kb.query_cr_routings(ko_flows, ok_flows)
+        return new_valid, failed, no_path_count
     
     def biased_k_shortest_path(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
         """
-        Enumerate up to MAX_CANDIDATES simple paths from src to dst on the
+        Enumerate up to K simple paths from src to dst on the
         (bandwidth-pruned) graph, biased to reuse the old path.
 
         Edges belonging to the old path get weight 0, all others weight 2, so
@@ -209,7 +215,7 @@ class RoutingEngine:
             List of (score, path_nodes) tuples, sorted by score. Empty if no
             path exists between src and dst.
         """
-        MAX_CANDIDATES = 10
+        K = 10
         
         old_path_edges = set(zip(old_path[:-1], old_path[1:])) if old_path else set()
         
@@ -223,7 +229,7 @@ class RoutingEngine:
             for c in nx.shortest_simple_paths(graph_pruned, source=src, target=dst, weight=weight_fn):
                 score = self.diff_score(old_path, c)
                 candidates.append((score, c))
-                if len(candidates) >= MAX_CANDIDATES:
+                if len(candidates) >= K:
                     break
         except nx.NetworkXNoPath:
             logger.warning(f"No path found for flow {flow_id} from {src} to {dst}")
@@ -233,3 +239,41 @@ class RoutingEngine:
         logger.info(f"search_candidates2: flow={flow_id} candidates_length={len(candidates)} paths")
         
         return candidates
+    
+    
+    def exhaustive_paths(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
+        """
+        Exhaustive baseline: enumerate ALL simple paths from src to dst whose
+        hop count does not exceed the shortest path by more than
+        2, ordered by (diff_score, path_latency) ascending.
+
+        crRouting backtracks over candidates in list order, so this ordering
+        makes Prolog commit the feasible path with minimal symmetric
+        difference and, on ties, minimal latency — the optimum the heuristics
+        are measured against. Small graphs only: the number of simple paths
+        grows exponentially with n.
+
+        Returns a list of (score, path_nodes) tuples (same shape as
+        biased_k_shortest_path). Empty if src and dst are disconnected.
+        """
+        try:
+            min_length = len(nx.shortest_path(graph_pruned, src, dst)) # min_length = hop + 1
+        except (nx.NetworkXNoPath, nx.NodeNotFound):
+            logger.warning(f"No path found for flow {flow_id} from {src} to {dst}")
+            return []
+        
+        cutoff = min_length + 1
+        
+        tmp_candidates = []
+        
+        for c in nx.all_simple_paths(graph_pruned, src, dst, cutoff=cutoff):
+            score = self.diff_score(old_path, c)
+            latency = self.path_latency(flow_id, c)
+            tmp_candidates.append((score, latency, c))
+        logger.info(f"search_candidates2: flow={flow_id} candidates_length={len(tmp_candidates)} paths")    
+        
+        tmp_candidates.sort(key=lambda x: (x[0], x[1]))
+        
+        candidates = [(p[0], p[2]) for p in tmp_candidates] #uniform in couples for re_rorouting 
+                
+        return candidates    

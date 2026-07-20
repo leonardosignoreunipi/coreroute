@@ -56,12 +56,12 @@ REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
 RESULTS_DIR   = BENCHMARK_DIR / "results"
 
-SEEDS          = [104729, 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863]
+SEEDS          = [104729, 224737, 350377]
 TOPOLOGIES     = ["er", "ba", "iaag"]
-SIZES          = [250, 500, 750, 1000]
-FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
-PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
-EPOCHS         = 12
+SIZES          = [50, 60, 70, 80, 90, 100]
+FLOW_FACTORS   = [1.00]
+PCT_MODS       = [0.30, 0.50]
+EPOCHS         = 6
 DEGRADE_FACTOR = (0.4, 1.2)  # per-hit multiplier range; >1 allows partial recovery, clamped at nominal
 
 # Fixed CSV schema: every row carries every column, so the CSV is always
@@ -191,14 +191,14 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: 
     pre     = _active_routes(kb)
 
     # CR: incremental; its result persists into the next epoch
-    t_cr, (_, n_ko, n_r, no_path_count_cr) = _timed(ctrl.continuous_reasoning)
+    t_cr, (_, n_ko, n_r, no_path_count) = _timed(ctrl.continuous_reasoning)
 
     measures = {
         "T_CR": t_cr,
         "N_KO_CR": n_ko, "N_R_CR": n_r,
         "n_links_epoch": n_links,
         "frac_rr_degraded": frac,
-        "no_path_count_CR": no_path_count_cr
+        "no_path_count_CR": no_path_count
     }
 
     if measure_full:
@@ -206,7 +206,7 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: 
         metrics_cr  = _compute_metrics(pre, _routes_from_snapshot(snapshot_cr), engine)
 
         # FULL: throwaway what-if, measured then discarded
-        t_full, (_, n_full_ko, n_full_r, no_path_count_full) = _timed(ctrl.full_recompute)
+        t_full, (_, n_full_ko, n_full_r, no_path_count) = _timed(ctrl.full_recompute)
         metrics_full = _compute_metrics(pre, _active_routes(kb), engine)
         kb.restore_kb_state(snapshot_cr)
 
@@ -217,7 +217,7 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: 
             "diff_simm_tot_FULL": metrics_full["diff_simm_tot"],
             "flows_changed_FULL": metrics_full["flows_changed"],
             "avg_latency_FULL":   metrics_full["avg_latency"],
-            "no_path_count_FULL": no_path_count_full
+            "no_path_count_FULL": no_path_count
         })
     else:
         metrics_cr = _compute_metrics(pre, _active_routes(kb), engine)

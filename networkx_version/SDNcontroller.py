@@ -33,20 +33,22 @@ class SDNcontroller:
         [2] reroute the ko-flows via the routing engine
         [3] write the resulting routings back to the KB
 
-        Returns (new_valid_routings, n_flows_ko, n_flows_rerouted).
+        Returns (new_valid_routings, n_flows_ko, n_flows_rerouted, no_path_count).
         """
         try:
             ok_flows, ko_flows = self.engine.get_partition()
         except Exception as e:
             logger.error(f"Partition query failed: {e}")
             raise SDNcontrollerError(f"Partition query failed: {e}")
-        new_valid_routings, failed_routings = self.engine.re_routing(ok_flows, ko_flows)
+        new_valid_routings, failed_routings, no_path_count = self.engine.re_routing(ok_flows, ko_flows)
         self.kb.update_janus_kb(new_valid_routings, failed_routings)
             
         logger.info(f"continuous_reasoning: {len(failed_routings)} flows could not be rerouted")
         logger.debug(f"NewValidRoutings: {new_valid_routings}, FailedRoutings: {failed_routings}")
         
-        return new_valid_routings, len(ko_flows), len(new_valid_routings) - len(ok_flows)
+        rr_flows_count = len(new_valid_routings) - len(ok_flows)
+        
+        return new_valid_routings, len(ko_flows), rr_flows_count, no_path_count
         
 
     def full_recompute(self):
@@ -60,13 +62,14 @@ class SDNcontroller:
             new_valid_routings: list of valid Routing objects
             f_ko: number of KO flows
             f_rerouted: number of successfully rerouted flows
+            no_path_coun
         """
         ko_flows = [Routing(flow_id=str(f.id), path_id="p_init") for f in self.config.flows.values()]
         
-        new_valid_routings, failedRoutings = self.engine.re_routing([], ko_flows)
+        new_valid_routings, failedRoutings, no_path_count = self.engine.re_routing([], ko_flows)
         
         logger.debug(f"Full recompute: NewValidRoutings: {new_valid_routings} FailedRoutings: {failedRoutings}")
         
         self.kb.update_janus_kb(new_valid_routings, failedRoutings)
         
-        return new_valid_routings, len(ko_flows), len(new_valid_routings)
+        return new_valid_routings, len(ko_flows), len(new_valid_routings), no_path_count
