@@ -56,7 +56,7 @@ REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
 RESULTS_DIR   = BENCHMARK_DIR / "results"
 
-SEEDS          = [104729, 224737, 350377]
+SEEDS          = [104729, 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863]
 TOPOLOGIES     = ["er", "ba", "iaag"]
 SIZES          = [50, 60, 70, 80, 90, 100]
 FLOW_FACTORS   = [1.00]
