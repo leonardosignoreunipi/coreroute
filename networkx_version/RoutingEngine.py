@@ -35,7 +35,7 @@ class RoutingEngine:
         self.kb = kb
         self.config = config
         self._pr = pr()
-        self.STRATEGY = self.biased_k_shortest_path
+        self.STRATEGY = self.biased_k_shortest_path_latency
         
     def path_latency(self, flow_id: str, nodes: list[str]) -> float:
         """
@@ -284,6 +284,30 @@ class RoutingEngine:
         return candidates
     
     def latency_biased_paths(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
+        """
+        Enumerate the TOP_N lowest-latency simple paths from src to dst, then
+        keep the K with the smallest diff_score among them.
+
+        The search weight is the per-edge latency (transmission + propagation +
+        qtime), so shortest_simple_paths yields paths in true ascending path
+        latency, not hop count — this duplicates the formula in path_latency /
+        hopLatency (routing_core.pl); keep the three in sync. The first TOP_N
+        are taken, then re-sorted by diff_score: since Python's sort is stable,
+        ties on diff_score preserve the ascending-latency order.
+
+        Unlike biased_k_shortest_path, candidate order is driven by latency, not
+        old-path reuse, so it trades reconfiguration cost for route quality.
+
+        Args:
+            graph_pruned: read-only bandwidth-filtered view of the network.
+            src, dst: endpoint node ids.
+            flow_id: flow being routed (drives the per-edge weight and logging).
+            old_path: node list of the flow's previous path (None/empty if new).
+
+        Returns:
+            List of (score, path_nodes) tuples, sorted by score (≤ K entries).
+            Empty if no path exists between src and dst.
+        """
         TOP_N = 100
         K = 10
 

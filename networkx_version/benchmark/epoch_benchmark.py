@@ -62,10 +62,8 @@ SIZES          = [250, 500, 750, 1000]
 FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
 EPOCHS         = 12
-DEGRADE_FACTOR = (0.4, 1.2)  # per-hit multiplier range; >1 allows partial recovery, clamped at nominal
+DEGRADE_FACTOR = (0.4, 1.2)
 
-# Fixed CSV schema: every row carries every column, so the CSV is always
-# rectangular even when a batch or an epoch fails.
 _ROW_DEFAULTS = {
     "num_nodes": None, "num_edges": None, "num_flows": None,
     "T_CR": None, "T_FULL": None,
@@ -94,7 +92,7 @@ def _timed(fn):
 
 
 def _active_routes(kb) -> dict:
-    """Read-only photo of the KB routing state: FlowId -> (PathId, Nodes)."""
+    """Photo of the KB routing state: FlowId -> (PathId, Nodes)."""
     return {r["FlowId"]: (r["PathId"], r["Nodes"]) for r in kb.get_routings()}
 
 
@@ -133,7 +131,7 @@ def _compute_metrics(pre: dict, post: dict, engine) -> dict:
 
 
 def _apply_bandwidth(network, kb, changes: list[tuple]) -> None:
-    """The ONLY place that mutates link bandwidth: applies (u, v, new_bw)
+    """Mutates link bandwidth: applies (u, v, new_bw)
     to the NetworkX graph and mirrors it into the Prolog KB, keeping the two
     routing stages (Python prefilter / Prolog authoritative check) in sync."""
     for (u, v, new_bw) in changes:
@@ -152,8 +150,7 @@ def _reset_to_nominal(network, kb, rr_edges: list[tuple]) -> None:
     _apply_bandwidth(network, kb, changes)
 
 
-def _perturb_epoch(network, kb, rr_edges: list[tuple], pct_mod: float,
-                   rng: random.Random) -> int:
+def _perturb_epoch(network, kb, rr_edges: list[tuple], pct_mod: float, rng: random.Random) -> int:
     """One epoch of cumulative drift: degrade a fresh random pct_mod share of
     rr links by multiplying their CURRENT bandwidth (clamped at nominal).
     Returns the number of links hit."""
@@ -190,7 +187,6 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: 
     frac    = _frac_degraded(network, rr_edges)
     pre     = _active_routes(kb)
 
-    # CR: incremental; its result persists into the next epoch
     t_cr, (_, n_ko, n_r, no_path_count_cr) = _timed(ctrl.continuous_reasoning)
 
     measures = {
@@ -311,13 +307,10 @@ def _run_batch(config_base: dict) -> list:
                     p_r  = measures["N_R_CR"]  / num_flows if num_flows > 0 else 0.0
                     results.append(_make_row(base, pct_mod, epoch, **sizes, **measures, P_KO=p_ko, P_R=p_r, ok=True))
                 except Exception as e:
-                    # drift state is now inconsistent: record the failure and
-                    # move to the next pct_mod, which restarts cleanly
                     results.append(_make_row(base, pct_mod, epoch, ok=False, error=str(e)))
                     break
 
     except Exception as e:
-        # setup/INIT failed: every (pct_mod, epoch) of the batch fails
         for pct_mod in pct_mods:
             for epoch in range(epochs):
                 results.append(_make_row(base, pct_mod, epoch, ok=False, error=f"Init failed: {e}"))
