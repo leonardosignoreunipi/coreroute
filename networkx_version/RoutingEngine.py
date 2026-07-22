@@ -40,20 +40,25 @@ class RoutingEngine:
     def path_latency(self, flow_id: str, nodes: list[str]) -> float:
         """
         Total latency of a path for a flow. For each hop (u, v):
-        transmission (pckt_size * rate / bw) + propagation (length / c)
+        serialisation (pckt_size / bw) + propagation (length / c)
         + qtime of the sending node. Mirrors hopLatency in routing_core.pl.
+
+        Serialisation is the time to put ONE packet on the wire, so the flow's
+        packet rate does NOT belong here (it used to: `pckt_size * rate / bw`,
+        which is dimensionless — a utilisation ratio summed onto seconds, and a
+        double count since the flow's demand is already enforced by
+        checkBandwidthPath). Fixed 22/07/2026.
 
         Returns 0.0 for empty or single-node paths.
         """
         if not nodes or len(nodes) < 2:
             return 0.0
-        rate = self.config.flows[flow_id].rate
         pckt_size = self.config.pckt_size 
         c = self.config.speed_of_light
         total = 0.0
         for u, v in zip(nodes[:-1], nodes[1:]):
             edge = self.network.graph[u][v]
-            d_trasm = pckt_size * rate / edge["bw"]
+            d_trasm = pckt_size / edge["bw"]
             d_prop = edge["length"] / c
             qtime = self.network.graph.nodes[u].get("qtime", 0.0)
             total += d_trasm + d_prop + qtime
@@ -311,12 +316,11 @@ class RoutingEngine:
         TOP_N = 100
         K = 10
 
-        rate = self.config.flows[flow_id].rate
         pckt_size = self.config.pckt_size
         speed_of_light = self.config.speed_of_light
 
         def weight_fn(u, v, edge_data):
-            d_trasm = pckt_size * rate / edge_data["bw"]
+            d_trasm = pckt_size / edge_data["bw"]
             d_prop = edge_data["length"] / speed_of_light
             qtime = self.network.graph.nodes[u].get("qtime", 0.0)
             return d_trasm + d_prop + qtime

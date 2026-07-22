@@ -85,8 +85,7 @@ hopLatency(FlowId, Node1, Node2, Delay) :-
     node_qtime(Node1, QTime1), 
     speedOfLight(SpeedOfLight), 
     pcktSize(FlowId, PcktSize),
-    flow(FlowId, _, _, _, Rate),
-    Dtrasm is PcktSize * Rate / Bandwidth, 
+    Dtrasm is PcktSize / Bandwidth, 
     Dprop is Length / SpeedOfLight, 
     Delay is QTime1 + Dtrasm + Dprop.
 

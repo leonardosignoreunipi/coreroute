@@ -20,7 +20,7 @@ ROUTER_BW = (1000.0, 10000.0) # Router-router link bandwidth range (Mbps): 1-10 
 # ER/BA/IAAG
 ACCESS_BW = 100000.0 # host-access link capacity (Mbps): 100 Gbps server/DC NIC, over-provisioned by design so access links never constrain routing.
 PCKT_RATE = (1000.0, 40000.0) # packets/s per flow (min, max); required_bw = PCKT_SIZE * PCKT_RATE = 12-480 Mbps (HD/4K video up to elephant flows). 480 Mbps at 1500 B/pckt is exactly 40000 pkt/s.
-MAX_LATENCY_RANGE = (0.5, 2.0) # per-flow max tolerable latency (s), drawn uniform. ACTIVE constraint: calibrated on the nominal path-latency distribution (~P90*1.5, P99*3) so it is satisfiable at nominal load but binds under cumulative degradation.
+MAX_LATENCY_RANGE = (0.05, 0.15) # per-flow max tolerable latency (s), drawn uniform: 50-150 ms, a realistic SLA for interactive/video services. NOT a binding constraint in this regime, and deliberately so: verified 22/07/2026 with a paired test (real SLA vs infinite SLA over the same perturbation sequence -> identical failure counts on all three topologies at pct=0.5, 12 epochs). With 1-10 Gbps links and 12-480 Mbps flows, checkBandwidthPath rejects congested paths long before queueing becomes significant, so capacity always binds first. Kept because it is part of the model and satisfied with margin: nominal P99 ~20 ms, zero INIT failures. Do NOT re-tune this to force failures - see CLAUDE.md "Latency model".
 RR_LINK_LENGTH = (1, 100) # length range (min, max) for router-router link (km): metro/regional backbone.
 ACCESS_LINK_LENGTH = 1.0 # host-router link length (km): campus/DC access span.
 QTIME = 0.002 # router queueing delay (s): 2 ms per hop, typical value.
