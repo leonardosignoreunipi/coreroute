@@ -51,6 +51,13 @@ from pathlib import Path
 import ray
 import pandas as pd
 
+
+logger = logging.getLogger(__name__)
+
+class epoch_benchmark_exception(Exception):
+    """Custom exception for experiments"""
+    pass
+
 BENCHMARK_DIR = Path(__file__).parent
 REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
@@ -174,7 +181,7 @@ def _frac_degraded(network, rr_edges: list[tuple]) -> float:
     return below / len(rr_edges)
 
 
-def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: bool) -> dict:
+def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
     """One drift epoch: perturb, measure CR (persists into the next epoch).
 
     The FULL what-if is measured only when `measure_full` is True (last epoch
@@ -197,16 +204,16 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: 
         "no_path_count_CR": no_path_count_cr
     }
 
-    if measure_full:
-        snapshot_cr = kb.snapshot_kb_state()          # freezes the CR trajectory
-        metrics_cr  = _compute_metrics(pre, _routes_from_snapshot(snapshot_cr), engine)
+    
+    snapshot_cr = kb.snapshot_kb_state()          # freezes the CR trajectory
+    metrics_cr  = _compute_metrics(pre, _routes_from_snapshot(snapshot_cr), engine)
 
-        # FULL: throwaway what-if, measured then discarded
-        t_full, (_, n_full_ko, n_full_r, no_path_count_full) = _timed(ctrl.full_recompute)
-        metrics_full = _compute_metrics(pre, _active_routes(kb), engine)
-        kb.restore_kb_state(snapshot_cr)
+    # FULL: throwaway what-if, measured then discarded
+    t_full, (_, n_full_ko, n_full_r, no_path_count_full) = _timed(ctrl.full_recompute)
+    metrics_full = _compute_metrics(pre, _active_routes(kb), engine)
+    kb.restore_kb_state(snapshot_cr)
 
-        measures.update({
+    measures.update({
             "T_FULL": t_full,
             "N_KO_FULL": n_full_ko, "N_R_FULL": n_full_r,
             "Speedup": t_full / t_cr if t_cr > 0 else float("inf"),
@@ -214,9 +221,7 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full: 
             "flows_changed_FULL": metrics_full["flows_changed"],
             "avg_latency_FULL":   metrics_full["avg_latency"],
             "no_path_count_FULL": no_path_count_full
-        })
-    else:
-        metrics_cr = _compute_metrics(pre, _active_routes(kb), engine)
+    })
 
     measures.update({
         "diff_simm_tot_CR": metrics_cr["diff_simm_tot"],
@@ -251,7 +256,11 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
 
     kb.clear_kb()
     kb.initialize_kb()
-    ctrl.full_recompute()  # INIT: route every flow once
+    nvr, f_ko, f_rr, f_no_path = ctrl.full_recompute()  # INIT: route every flow once
+    
+    if len(nvr) != num_flows:
+        raise epoch_benchmark_exception(f"The experiment starts with {len(nvr)} routing")
+    
     return network, kb, engine, ctrl
 
 
@@ -302,7 +311,7 @@ def _run_batch(config_base: dict) -> list:
 
             for epoch in range(epochs):
                 try:
-                    measures = _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng, measure_full = (epoch == epochs - 1))
+                    measures = _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng)
                     p_ko = measures["N_KO_CR"] / num_flows if num_flows > 0 else 0.0
                     p_r  = measures["N_R_CR"]  / num_flows if num_flows > 0 else 0.0
                     results.append(_make_row(base, pct_mod, epoch, **sizes, **measures, P_KO=p_ko, P_R=p_r, ok=True))

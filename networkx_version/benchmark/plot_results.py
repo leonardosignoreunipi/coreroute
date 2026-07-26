@@ -1,8 +1,8 @@
 """
 Plot dei risultati dell'esperimento finale (Task 6), seguendo PLOTTING_PLAN.md.
 
-Legge  benchmark/results/epoch_drift_biased_k_latency.csv
-Produce 12 figure PNG in  benchmark/results/plots_finali/
+Legge  benchmark/results/epoch_drift_latenza_fisica.csv
+Produce 12 figure PNG in  benchmark/results/plots_latenza_fisica/
 
 Come funziona il file (per orientarti):
   - in alto: costanti (colori, percorsi, config di riferimento);
@@ -29,8 +29,8 @@ import matplotlib.pyplot as plt
 # ---------------------------------------------------------------------------
 
 BENCHMARK_DIR = Path(__file__).parent
-CSV_PATH  = BENCHMARK_DIR / "results" / "epoch_drift_biased_k_latency.csv"
-OUT_DIR   = BENCHMARK_DIR / "results" / "plots_finali"
+CSV_PATH  = BENCHMARK_DIR / "results" / "epoch_drift_latenza_fisica.csv"
+OUT_DIR   = BENCHMARK_DIR / "results" / "plots_latenza_fisica"
 
 # config di riferimento: la cella dove CR e FULL si distinguono di più
 N_RIF   = 1000
@@ -355,7 +355,7 @@ def fig5b_latenza_vs_pct(df):
     """
     last = df[df.epoch == df.epoch.max()]
     fig, axes = _nuova_figura_per_topologia(
-        "Fig. 5b — Latenza media: CR vs FULL al crescere del degrado",
+        "Latenza media: CR vs FULL al crescere del degrado",
         "latenza media di percorso, ultima epoca (n=1000, ff=1.0) · mediana ± IQR sui seed",
         "latenza media di percorso (s)", "percentuale archi perturbati (%)")
     for ax, topo in zip(axes, TOPOLOGIE):
@@ -373,7 +373,7 @@ def fig5b_latenza_vs_pct(df):
 def figV1_degrado(df):
     """Quanto è stata degradata la rete: frac_rr_degraded per epoca, per pct."""
     fig, axes = _nuova_figura_per_topologia(
-        "Fig. V1 — Quanto abbiamo degradato la rete",
+        "Quanto abbiamo degradato la rete",
         "frazione di link router-router sotto la banda nominale (n=1000, ff=1.0)",
         "frazione di link degradati", "epoca")
     for ax, topo in zip(axes, TOPOLOGIE):
@@ -415,7 +415,7 @@ def figV3_fallimenti(df):
     last["prolog_fail"] = last.falliti - last.no_path_count_CR   # contesa/SLA
 
     fig, axes = _nuova_figura_per_topologia(
-        "Fig. V3 — Perché i flussi falliscono: pruning vs ragionamento",
+        "Perché i flussi falliscono: pruning vs ragionamento",
         "quasi tutti i fallimenti vengono dai vincoli in Prolog, non dalla disconnessione",
         "flussi falliti (medi)", "percentuale archi perturbati (%)")
     for ax, topo in zip(axes, TOPOLOGIE):
