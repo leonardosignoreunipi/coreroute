@@ -14,30 +14,27 @@ logger = logging.getLogger(__name__)
 # unchanged while absolute values match modern hardware.
 
 # ER/BA
-HOST_FRACTION = 0.10 # 10% of the total nodes are hosts, the rest are routers (modeling choice: hosts are aggregated service attachment points, the focus is the router core).
-ROUTER_BW = (1000.0, 10000.0) # Router-router link bandwidth range (Mbps): 1-10 Gbps core links, modern metro/enterprise standard.
+HOST_FRACTION = 0.30 
+ROUTER_BW = (40.0, 150.0) # router-router link bandwidth range (Mbps)
 
 # ER/BA/IAAG
-ACCESS_BW = 100000.0 # host-access link capacity (Mbps): 100 Gbps server/DC NIC, over-provisioned by design so access links never constrain routing.
-PCKT_RATE = (1000.0, 40000.0) # packets/s per flow (min, max); required_bw = PCKT_SIZE * PCKT_RATE = 12-480 Mbps (HD/4K video up to elephant flows). 480 Mbps at 1500 B/pckt is exactly 40000 pkt/s.
-MAX_LATENCY_RANGE = (0.05, 0.15) # per-flow max tolerable latency (s), drawn uniform: 50-150 ms, a realistic SLA for interactive/video services. NOT a binding constraint in this regime, and deliberately so: verified 22/07/2026 with a paired test (real SLA vs infinite SLA over the same perturbation sequence -> identical failure counts on all three topologies at pct=0.5, 12 epochs). With 1-10 Gbps links and 12-480 Mbps flows, checkBandwidthPath rejects congested paths long before queueing becomes significant, so capacity always binds first. Kept because it is part of the model and satisfied with margin: nominal P99 ~20 ms, zero INIT failures. Do NOT re-tune this to force failures - see CLAUDE.md "Latency model".
-RR_LINK_LENGTH = (1, 100) # length range (min, max) for router-router link (km): metro/regional backbone.
-ACCESS_LINK_LENGTH = 1.0 # host-router link length (km): campus/DC access span.
-QTIME = 0.002 # router queueing delay (s): 2 ms per hop, typical value.
+ACCESS_BW = 100.0 # host-access link capacity (Mbps)
+PCKT_RATE = (167.0, 667.0) # packets/s per flow, require_bw(f) = (2, 8) (Mbit/s)
+MAX_LATENCY_RANGE = (0.03, 0.06) # standard SLA
+RR_LINK_LENGTH = (200, 1000) # length range (min, max) for router-router link (km)
+ACCESS_LINK_LENGTH = (1, 10) # host-router link length (km): campus/DC access span.
+QTIME = (0.001, 0.005) # router queueing delay (s): 2-4 ms per hop, typical value.
 SPEED_OF_LIGHT = 200000.0 # km/s: light in fiber (n~1.5), i.e. 5 us/km.
 PCKT_SIZE = 0.012 # packet size (Mb): 1500-byte Ethernet MTU frame. It's possible to set a PCKT_SIZE per flow.
 
 # IAAG: link bandwidth range (Mbps) keyed by the unordered pair of endpoint tiers.
-# Node tiers come from networkx.random_internet_as_graph:
-#   T  = transit / tier-1, M = mid-level, CP = content provider, C = customer.
-# Hierarchical scale: tier-1 backbone 10-100 Gbps, aggregation 2-20 Gbps.
 IAAG_BW_TIERS = {
-    frozenset({"T", "T"}):   (10000.0, 100000.0),
-    frozenset({"T", "CP"}):  (10000.0, 50000.0),
-    frozenset({"CP", "CP"}): (10000.0, 50000.0),
-    frozenset({"T", "M"}):   (5000.0, 20000.0),
-    frozenset({"M", "CP"}):  (5000.0, 20000.0),
-    frozenset({"M", "M"}):   (2000.0, 10000.0),
+    frozenset({"T", "T"}):   (500.0, 1000.0),   
+    frozenset({"T", "CP"}):  (250.0, 500.0),
+    frozenset({"CP", "CP"}): (150.0, 250.0),
+    frozenset({"T", "M"}):   (100.0, 200.0),   
+    frozenset({"M", "CP"}):  (100.0, 150.0),
+    frozenset({"M", "M"}):   (100.0, 150.0),   
 }
 
 
@@ -119,7 +116,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
 
         # relabel integer router nodes 0..num_routers-1 to "r{i}" string ids
         core_graph = nx.relabel_nodes(core_graph, {i: f"r{i}" for i in core_graph.nodes()})
-        routers = [{"id": f"r{i}", "qtime": QTIME} for i in range(num_routers)]
+        routers = [{"id": f"r{i}", "qtime": random.uniform(*QTIME)} for i in range(num_routers)]
 
         # Attach each host to one random router via a high-capacity access link.
         # Host nodes keep their string id ("h{i}"); routers were relabelled to "r{i}" above.
@@ -137,7 +134,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
         for src_id, dst_id in core_graph.edges:
             if src_id.startswith('h') or dst_id.startswith('h'):
                 bw = ACCESS_BW
-                length = ACCESS_LINK_LENGTH
+                length = random.randint(*ACCESS_LINK_LENGTH) 
             else:
                 bw = float(random.uniform(*ROUTER_BW))
                 length = float(random.randint(*RR_LINK_LENGTH))
@@ -174,7 +171,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
                 h_count += 1
             else:
                 router_id = f"r{r_count}"
-                routers.append({"id": router_id, "qtime": QTIME})
+                routers.append({"id": router_id, "qtime": random.uniform(*QTIME)})
                 node_id[n] = router_id
                 node_type[router_id] = tier
                 r_count += 1
@@ -192,7 +189,7 @@ def generate_sdn_topology(graph_type=None, num_nodes=None, num_flows=None, filen
             dst_id = node_id[v]
             if src_id.startswith('h') or dst_id.startswith('h'):
                 bw = ACCESS_BW                                 
-                length = ACCESS_LINK_LENGTH
+                length = random.randint(*ACCESS_LINK_LENGTH)
             else:
                 bw = _iaag_link_bw(node_type[src_id], node_type[dst_id])
                 length = float(random.randint(*RR_LINK_LENGTH))

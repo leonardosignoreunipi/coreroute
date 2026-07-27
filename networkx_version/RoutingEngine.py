@@ -358,7 +358,7 @@ class RoutingEngine:
             logger.warning(f"No path found for flow {flow_id} from {src} to {dst}")
             return []
         
-        cutoff = min_length + 1
+        cutoff = nx.diameter(graph_pruned)*2
         
         tmp_candidates = []
         
