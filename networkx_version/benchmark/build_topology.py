@@ -20,7 +20,7 @@ ROUTER_BW = (50.0, 150.0) # router-router link bandwidth range (Mbps)
 # ER/BA/IAAG
 ACCESS_BW = 100.0 # host-access link capacity (Mbps)
 PCKT_RATE = (167.0, 667.0) # packets/s per flow, require_bw(f) = (2, 8) (Mbit/s)
-MAX_LATENCY_RANGE = (0.03, 0.06) # standard SLA
+MAX_LATENCY_RANGE = (0.05, 0.15) # standard SLA
 RR_LINK_LENGTH = (200, 1000) # length range (min, max) for router-router link (km)
 ACCESS_LINK_LENGTH = (1, 10) # host-router link length (km): campus/DC access span.
 QTIME = (0.001, 0.005) # router queueing delay (s): 2-4 ms per hop, typical value.
