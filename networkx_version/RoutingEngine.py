@@ -72,11 +72,7 @@ class RoutingEngine:
         (symmetric difference). Direction is significant on purpose: each
         differing directed edge approximates one forwarding update the SDN
         controller must push to the routers to switch traffic direction.
-            
-        Returns 0 when there is no old path (new flow: nothing to reconfigure).
         """
-        if not old_path:
-            return 0
         try:
             set_old_path = set((u, v) for u, v in zip(old_path[:-1], old_path[1:]))
             set_new_path = set((u, v) for u, v in zip(new_path[:-1], new_path[1:]))
