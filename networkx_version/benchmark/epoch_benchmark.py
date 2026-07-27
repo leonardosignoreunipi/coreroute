@@ -63,13 +63,13 @@ REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
 RESULTS_DIR   = BENCHMARK_DIR / "results"
 
-SEEDS          = [104729, 224737, 350377, 479909, 611953, 742073, 871871, 1003001, 1234567, 15485863]
+SEEDS          = [104729, 224737, 350377, 479915, 611953, 742073, 871871, 1003001, 1234567, 15485863]
 TOPOLOGIES     = ["er", "ba", "iaag"]
 SIZES          = [250, 500, 750, 1000]
 FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
-EPOCHS         = 12
-DEGRADE_FACTOR = (0.4, 1.2)
+EPOCHS         = 20
+DEGRADE_FACTOR = (0.5, 1.5)
 
 _ROW_DEFAULTS = {
     "num_nodes": None, "num_edges": None, "num_flows": None,

@@ -340,8 +340,7 @@ class RoutingEngine:
     def exhaustive_paths(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
         """
         Exhaustive baseline: enumerate ALL simple paths from src to dst whose
-        hop count does not exceed the shortest path by more than
-        2, ordered by (diff_score, path_latency) ascending.
+        hop count does not exceed the diameter * 2, ordered by (diff_score, path_latency) ascending.
 
         crRouting backtracks over candidates in list order, so this ordering
         makes Prolog commit the feasible path with minimal symmetric
@@ -352,21 +351,25 @@ class RoutingEngine:
         Returns a list of (score, path_nodes) tuples (same shape as
         biased_k_shortest_path). Empty if src and dst are disconnected.
         """
+        
+        if nx.is_connected(graph_pruned):
+            cutoff = nx.diameter(graph_pruned)*2
+        else: 
+            components = nx.connected_components(graph_pruned)
+            main_component = max(components, key=len)
+            gcomponent = graph_pruned.subgraph(main_component)
+            cutoff = nx.diameter(gcomponent)*2
+        
+        tmp_candidates = []
         try:
-            min_length = len(nx.shortest_path(graph_pruned, src, dst)) # min_length = hop + 1
+            for c in nx.all_simple_paths(graph_pruned, src, dst, cutoff=cutoff):
+                score = self.diff_score(old_path, c)
+                latency = self.path_latency(flow_id, c)
+                tmp_candidates.append((score, latency, c))
+            logger.info(f"exhaustive_paths: flow={flow_id} candidates_length={len(tmp_candidates)} paths")    
         except (nx.NetworkXNoPath, nx.NodeNotFound):
             logger.warning(f"No path found for flow {flow_id} from {src} to {dst}")
             return []
-        
-        cutoff = nx.diameter(graph_pruned)*2
-        
-        tmp_candidates = []
-        
-        for c in nx.all_simple_paths(graph_pruned, src, dst, cutoff=cutoff):
-            score = self.diff_score(old_path, c)
-            latency = self.path_latency(flow_id, c)
-            tmp_candidates.append((score, latency, c))
-        logger.info(f"exhaustive_paths: flow={flow_id} candidates_length={len(tmp_candidates)} paths")    
         
         tmp_candidates.sort(key=lambda x: (x[0], x[1]))
         

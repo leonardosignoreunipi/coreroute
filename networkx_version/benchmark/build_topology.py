@@ -15,7 +15,7 @@ logger = logging.getLogger(__name__)
 
 # ER/BA
 HOST_FRACTION = 0.30 
-ROUTER_BW = (40.0, 150.0) # router-router link bandwidth range (Mbps)
+ROUTER_BW = (50.0, 150.0) # router-router link bandwidth range (Mbps)
 
 # ER/BA/IAAG
 ACCESS_BW = 100.0 # host-access link capacity (Mbps)
