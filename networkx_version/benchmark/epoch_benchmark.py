@@ -63,13 +63,14 @@ REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
 RESULTS_DIR   = BENCHMARK_DIR / "results"
 
-SEEDS          = [104730, 224737] #, 350377, 479915, 611953, 742073, 871871, 1003001, 1234567, 15485863
+SEEDS          = [104730, 224737, 611953, 742073, 871871] # 350377, 479915, 1003001, 1234567, 15485863
 TOPOLOGIES     = ["er", "ba", "iaag"]
 SIZES          = [250, 500, 750, 1000]
-FLOW_FACTORS   = [1.00] #0.25, 0.50, 0.75, 
-PCT_MODS       = [0.50] #0.10, 0.20, 0.30, 
-EPOCHS         = 3 #20
+FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
+PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
+EPOCHS         = 20
 DEGRADE_FACTOR = (0.5, 1.5)
+INIT_TOLERANCE = 0.01
 
 _ROW_DEFAULTS = {
     "num_nodes": None, "num_edges": None, "num_flows": None,
@@ -257,11 +258,15 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
     kb.clear_kb()
     kb.initialize_kb()
     nvr, f_ko, f_rr, f_no_path = ctrl.full_recompute()  # INIT: route every flow once
-    
+
+    # La soglia di accettazione e' decisa da _run_batch, non qui: cosi' il
+    # conteggio raggiunge il CSV anche quando il batch viene scartato.
     if len(nvr) != num_flows:
-        raise epoch_benchmark_exception(f"The experiment starts with {len(nvr)} routing")
-    
-    return network, kb, engine, ctrl
+        logger.warning(f"[{topology} n={n} seed={seed}] INIT incompleta: "
+                       f"{len(nvr)}/{num_flows} instradati ({num_flows - len(nvr)} falliti, "
+                       f"{f_no_path} senza cammino con banda sufficiente)")
+
+    return network, kb, engine, ctrl, len(nvr), f_no_path
 
 
 def _run_batch(config_base: dict) -> list:
@@ -281,15 +286,24 @@ def _run_batch(config_base: dict) -> list:
     num_flows   = int(flow_factor * n)
     pct_mods    = config_base.get("pct_mods", PCT_MODS)
     epochs      = config_base.get("epochs", EPOCHS)
-
-    base = {"topology": topology, "n": n, "flow_factor": flow_factor, "seed": seed}
+    
+    base = {"topology": topology, "n": n, "flow_factor": flow_factor, "seed": seed,
+            "init_routed": None, "init_no_path": None}
     results   = []
     topo_file = None
 
     try:
         fd, topo_file = tempfile.mkstemp(suffix=".json")
         os.close(fd)
-        network, kb, engine, ctrl = _build_system(topology, n, num_flows, seed, topo_file)
+        network, kb, engine, ctrl, init_routed, init_no_path = _build_system(topology, n, num_flows, seed, topo_file)
+        base["init_routed"]  = init_routed
+        base["init_no_path"] = init_no_path
+
+        max_falliti = max(1, int(INIT_TOLERANCE * num_flows))
+        if num_flows - init_routed > max_falliti:
+            raise epoch_benchmark_exception(
+                f"INIT oltre tolleranza: {init_routed}/{num_flows} instradati "
+                f"({num_flows - init_routed} falliti > {max_falliti} ammessi)")
 
         num_nodes = len(network.graph.nodes)
         num_edges = len(network.graph.edges)
@@ -322,7 +336,7 @@ def _run_batch(config_base: dict) -> list:
     except Exception as e:
         for pct_mod in pct_mods:
             for epoch in range(epochs):
-                results.append(_make_row(base, pct_mod, epoch, ok=False, error=f"Init failed: {e}"))
+                            results.append(_make_row(base, pct_mod, epoch, num_flows=num_flows, ok=False, error=f"Init failed: {e}"))
 
     finally:
         if topo_file and os.path.exists(topo_file):

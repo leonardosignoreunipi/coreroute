@@ -18,9 +18,10 @@ sys.path.insert(0, str(Path(__file__).parent))
 from epoch_benchmark import (
     epoch_benchmark_exception,
     BENCHMARK_DIR, REPO_ROOT, KB_FILE, RESULTS_DIR,
-    SEEDS, TOPOLOGIES,
+    TOPOLOGIES,
     _make_row, _timed, _reset_to_nominal, _run_epoch,
 )
+SEEDS = [104730, 224737, 350377, 479915, 611953, 742073, 871871, 1003001, 1234567, 15485863]
 
 logger = logging.getLogger(__name__)
 
@@ -173,7 +174,7 @@ run_trial_batch = ray.remote(num_cpus=1, max_calls=1)(_run_batch)
 if __name__ == "__main__":
     os.environ["RAY_local_fs_capacity_threshold"] = "0.99"
     RESULTS_DIR.mkdir(exist_ok=True)
-    NUM_WORKERS = 7
+    NUM_WORKERS = int(os.environ.get("NUM_WORKERS", 7))
 
     OUTPUT_CSV = sys.argv[1] if len(sys.argv) > 1 else "heuristic_benchmark.csv"
 

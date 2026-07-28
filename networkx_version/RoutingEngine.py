@@ -19,7 +19,7 @@ class ExhaustiveTimeoutError(RoutingEngineError):
     pass
 
 # Time budget for ONE call to exhaustive_paths.
-EXHAUSTIVE_TIMEOUT = 10.0
+EXHAUSTIVE_TIMEOUT = 15.0
 
 class RoutingEngine:
     """
