@@ -28,7 +28,7 @@ STRATEGIES   = ["exhaustive_paths", "latency_biased_paths","biased_k_shortest_pa
 SIZES        = [20, 30, 40, 50, 60, 70, 80, 90, 100]
 FLOW_FACTORS = [1.00]
 PCT_MODS     = [0.10, 0.30, 0.50]
-EPOCHS       = 15
+EPOCHS       = 1
 
 INIT_STRATEGY = "biased_k_shortest_path_latency"
 
