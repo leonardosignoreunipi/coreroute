@@ -129,7 +129,7 @@ def _compute_metrics(pre: dict, post: dict, engine) -> dict:
         if pre_path_id != post_path_id:
             flows_changed += 1
         if post_nodes:
-            latencies.append(engine.path_latency(flow_id, post_nodes))
+            latencies.append(engine.path_latency(post_nodes))
     return {
         "diff_simm_tot": diff_simm_tot,
         "flows_changed": flows_changed,

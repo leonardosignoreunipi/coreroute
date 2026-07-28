@@ -6,6 +6,7 @@ import logging
 import networkx as nx
 from Models import Routing
 from PathRegistry import PathRegistry as pr
+import time
 
 
 logger = logging.getLogger(__name__)
@@ -13,6 +14,12 @@ logger = logging.getLogger(__name__)
 class RoutingEngineError(Exception):
     """Custom exception for RoutingEngine-related errors."""
     pass
+class ExhaustiveTimeoutError(RoutingEngineError):
+    """Timeout: Exhaustive search aborted to prevent combinatorial explosion."""
+    pass
+
+# Time budget for ONE call to exhaustive_paths.
+EXHAUSTIVE_TIMEOUT = 10.0
 
 class RoutingEngine:
     """
@@ -37,17 +44,11 @@ class RoutingEngine:
         self._pr = pr()
         self.STRATEGY = self.biased_k_shortest_path_latency
         
-    def path_latency(self, flow_id: str, nodes: list[str]) -> float:
+    def path_latency(self, nodes: list[str]) -> float:
         """
-        Total latency of a path for a flow. For each hop (u, v):
+        Total latency of a path. For each hop (u, v):
         serialisation (pckt_size / bw) + propagation (length / c)
         + qtime of the sending node. Mirrors hopLatency in routing_core.pl.
-
-        Serialisation is the time to put ONE packet on the wire, so the flow's
-        packet rate does NOT belong here (it used to: `pckt_size * rate / bw`,
-        which is dimensionless — a utilisation ratio summed onto seconds, and a
-        double count since the flow's demand is already enforced by
-        checkBandwidthPath). Fixed 22/07/2026.
 
         Returns 0.0 for empty or single-node paths.
         """
@@ -268,7 +269,7 @@ class RoutingEngine:
         try:
             for c in nx.shortest_simple_paths(graph_pruned, source=src, target=dst, weight=weight_fn):
                 score = self.diff_score(old_path, c)
-                latency = self.path_latency(flow_id, c)
+                latency = self.path_latency(c)
                 tmp_candidates.append((score, latency, c))
                 if len(tmp_candidates) >= K:
                     break
@@ -361,10 +362,13 @@ class RoutingEngine:
             cutoff = nx.diameter(gcomponent)*2
         
         tmp_candidates = []
+        deadline = time.perf_counter() + EXHAUSTIVE_TIMEOUT
         try:
             for c in nx.all_simple_paths(graph_pruned, src, dst, cutoff=cutoff):
+                if time.perf_counter() > deadline:
+                    raise ExhaustiveTimeoutError(f"flow {flow_id}: exhaustive search exceeded {EXHAUSTIVE_TIMEOUT:.0f}s ({len(tmp_candidates)} paths, cutoff={cutoff})")
                 score = self.diff_score(old_path, c)
-                latency = self.path_latency(flow_id, c)
+                latency = self.path_latency(c)
                 tmp_candidates.append((score, latency, c))
             logger.info(f"exhaustive_paths: flow={flow_id} candidates_length={len(tmp_candidates)} paths")    
         except (nx.NetworkXNoPath, nx.NodeNotFound):
