@@ -13,14 +13,7 @@ logger = logging.getLogger(__name__)
 
 class RoutingEngineError(Exception):
     """Custom exception for RoutingEngine-related errors."""
-    pass
-class ExhaustiveTimeoutError(RoutingEngineError):
-    """Timeout: Exhaustive search aborted to prevent combinatorial explosion."""
-    pass
-
-# Time budget for ONE call to exhaustive_paths.
-EXHAUSTIVE_TIMEOUT = 15.0
-
+    pass 
 class RoutingEngine:
     """
         Continuous-reasoning routing engine.
@@ -340,17 +333,11 @@ class RoutingEngine:
     
     def exhaustive_paths(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
         """
-        Exhaustive baseline: enumerate ALL simple paths from src to dst whose
-        hop count does not exceed the diameter * 2, ordered by (diff_score, path_latency) ascending.
-
-        crRouting backtracks over candidates in list order, so this ordering
-        makes Prolog commit the feasible path with minimal symmetric
-        difference and, on ties, minimal latency — the optimum the heuristics
-        are measured against. Small graphs only: the number of simple paths
-        grows exponentially with n.
-
-        Returns a list of (score, path_nodes) tuples (same shape as
-        biased_k_shortest_path). Empty if src and dst are disconnected.
+        Baseline the heuristics are measured against: enumerates ALL simple paths
+        src->dst within cutoff = diameter*2 hops (main component if disconnected),
+        sorted by (diff_score, path_latency) so crRouting commits the best one.
+        The optimum is therefore exact but only WITHIN that hop budget and per
+        flow, never global.
         """
         
         if nx.is_connected(graph_pruned):
@@ -362,11 +349,8 @@ class RoutingEngine:
             cutoff = nx.diameter(gcomponent)*2
         
         tmp_candidates = []
-        deadline = time.perf_counter() + EXHAUSTIVE_TIMEOUT
         try:
             for c in nx.all_simple_paths(graph_pruned, src, dst, cutoff=cutoff):
-                if time.perf_counter() > deadline:
-                    raise ExhaustiveTimeoutError(f"flow {flow_id}: exhaustive search exceeded {EXHAUSTIVE_TIMEOUT:.0f}s ({len(tmp_candidates)} paths, cutoff={cutoff})")
                 score = self.diff_score(old_path, c)
                 latency = self.path_latency(c)
                 tmp_candidates.append((score, latency, c))
