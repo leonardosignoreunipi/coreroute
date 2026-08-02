@@ -36,6 +36,7 @@ class RoutingEngine:
         self.config = config
         self._pr = pr()
         self.STRATEGY = self.biased_k_shortest_path_latency
+        self.prolog_strategy = self.resolve_cr_routing
         
     def path_latency(self, nodes: list[str]) -> float:
         """
@@ -123,43 +124,23 @@ class RoutingEngine:
             logger.error(f"Error retrieving partition: {e}")
             raise RoutingEngineError(f"Error retrieving partition: {e}")
 
-    def re_routing(self, ok_flows: list[Routing], ko_flows: list[Routing]):
+    def _generate_candidates(self, ko_flows: list[Routing]) -> int:
         """
-        Continuous-reasoning routing: reallocate the ko-flows.
-
-        Ko-flows are processed from the lowest to the highest required
-        bandwidth. For each one it prunes the graph to the links that satisfy
-        the flow's bandwidth, computes disruption-biased candidate paths,
-        deduplicates them through PathRegistry and stores them in the KB as the
-        flow's path candidates. Finally it asks the KB to commit a consistent
-        assignment.
-
-        Args:
-            ok_flows: routings that already hold a valid path.
-            ko_flows: routings to (re)allocate.
-
-        Returns:
-            (new_valid_routings, failed_routings, no_path_count) — no_path_count
-            is the number of ko-flows with zero Stage-1 candidates (src/dst
-            disconnected in the pruned graph). If ko_flows is empty, returns
-            (ok_flows, [], 0).
+        Stage 1 (candidate generation + KB write), shared by re_routing.
+        Processes ko_flows smallest-bandwidth-first. Returns no_path_count
+        (ko-flows with zero candidates).
         """
-        
-        if len(ko_flows) == 0:
-            logger.info("No koFlows")
-            return ok_flows, [], 0
-
         flowsNodes = {r.flow_id: self.kb.get_path_by_id(r.path_id) for r in ko_flows}
         ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
         temp_koflows = list(ko_flows)
 
         paths = self.kb.get_all_paths()
         self._pr.load_paths(paths) #load all current paths in a dictonary
-        
+
         no_path_count = 0
-        
+
         while len(temp_koflows) > 0:
-            routing = temp_koflows.pop() #take the flow with the lowest packet rate among the KoFlows
+            routing = temp_koflows.pop()
             flowId = routing.flow_id
 
             old_path = flowsNodes[flowId]
@@ -172,9 +153,9 @@ class RoutingEngine:
 
             required_bw = self.config.flows[flowId].required_bw(self.config.pckt_size)
             graph_pruned = self.network.pruning_per_bandwidth(required_bw)
-            
+
             candidates = self.STRATEGY(graph_pruned, src, dst, flowId, old_path)
-            
+
             if len(candidates) == 0:
                 logger.warning(f"Not valid paths for flow: {flowId}")
                 no_path_count += 1
@@ -184,12 +165,93 @@ class RoutingEngine:
                 path_id, is_new = self._pr.intern_path(nodes) # returns the existing id or if not exists returns a fresh id
                 if is_new: self.kb.put_path(path_id, nodes[0], nodes[-1], nodes)
                 pathsIds.append(path_id)
-            
+
             self.kb.put_candidates_paths(flowId, pathsIds)
-            
-        new_valid, failed = self.kb.query_cr_routings(ko_flows, ok_flows)
+
+        return no_path_count
+
+    def re_routing(self, ok_flows: list[Routing], ko_flows: list[Routing]):
+        """
+        Continuous-reasoning routing: reallocate the ko-flows.
+
+        Runs Stage 1, then resolves Stage 2 via self.prolog_strategy
+        (default: resolve_cr_routing; swappable to resolve_exhaustive_routing,
+        same return shape either way -- no branching, like self.STRATEGY).
+
+        Args:
+            ok_flows: routings that already hold a valid path.
+            ko_flows: routings to (re)allocate.
+
+        Returns:
+            (new_valid_routings, failed_routings, no_path_count). If
+            ko_flows is empty, returns (ok_flows, [], 0).
+        """
+
+        if len(ko_flows) == 0:
+            logger.info("No koFlows")
+            return ok_flows, [], 0
+
+        no_path_count = self._generate_candidates(ko_flows)
+
+        new_valid, failed = self.prolog_strategy(ko_flows, ok_flows)
         return new_valid, failed, no_path_count
-    
+
+    def resolve_cr_routing(self, ko_flows: list[Routing], ok_flows: list[Routing]):
+        """Default prolog_strategy: resolve via crRouting/4."""
+        return self.kb.query_cr_routings(ko_flows, ok_flows)
+
+    def resolve_exhaustive_routing(self, ko_flows: list[Routing], ok_flows: list[Routing]):
+        """Alternate prolog_strategy: exhaustiveRouting/3, then pick the best solution."""
+        solutions = self.kb.query_exhaustive_routings(ko_flows, ok_flows)
+        return self.select_best_exhaustive_solution(solutions, ko_flows, ok_flows)
+
+    def select_best_exhaustive_solution(self, solutions: list[list[Routing]], ko_flows: list[Routing], ok_flows: list[Routing]):
+        """
+        Pick the best of exhaustiveRouting/3's per-permutation solutions.
+        Priority: 1. fewest failed flows; 2. lowest total symmetric diff
+        (failed flows score as full removal cost, diff_score(old, []));
+        3. lowest average latency among routed flows.
+        Returns (new_valid_routings, failed_routings), same shape as
+        resolve_cr_routing.
+        """
+        if not solutions:
+            raise RoutingEngineError("select_best_exhaustive_solution: no solutions to choose from")
+
+        ko_flow_ids = {r.flow_id for r in ko_flows}
+        old_path_by_flow = {r.flow_id: self.kb.get_path_by_id(r.path_id) for r in ko_flows}
+        path_nodes_cache: dict[str, list[str]] = {}
+
+        def nodes_of(path_id):
+            if path_id not in path_nodes_cache:
+                path_nodes_cache[path_id] = self.kb.get_path_by_id(path_id)
+            return path_nodes_cache[path_id]
+
+        scored = []
+        for solution in solutions:
+            routed_by_flow = {r.flow_id: r for r in solution if r.flow_id in ko_flow_ids}
+            failed_flow_ids = ko_flow_ids - routed_by_flow.keys()
+
+            total_diff = 0
+            latencies = []
+            for flow_id in ko_flow_ids:
+                old_path = old_path_by_flow[flow_id]
+                if flow_id in routed_by_flow:
+                    new_path = nodes_of(routed_by_flow[flow_id].path_id)
+                    total_diff += self.diff_score(old_path, new_path)
+                    latencies.append(self.path_latency(new_path))
+                else:
+                    total_diff += self.diff_score(old_path, [])
+
+            avg_latency = sum(latencies) / len(latencies) if latencies else 0.0
+            scored.append((len(failed_flow_ids), total_diff, avg_latency, solution, failed_flow_ids))
+
+        scored.sort(key=lambda s: (s[0], s[1], s[2]))
+        _, _, _, best_solution, best_failed_ids = scored[0]
+
+        new_valid = best_solution
+        failed = [r for r in ko_flows if r.flow_id in best_failed_ids]
+        return new_valid, failed
+
     def biased_k_shortest_path(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
         """
         Enumerate up to K simple paths from src to dst on the
@@ -331,7 +393,7 @@ class RoutingEngine:
         candidates.sort(key=lambda x: x[0])
         return candidates[:K]            
     
-    def exhaustive_paths(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
+    def all_simple_candidates(self, graph_pruned : nx.Graph, src: str, dst: str, flow_id: str, old_path : list[str] = None):
         """
         Baseline the heuristics are measured against: enumerates ALL simple paths
         src->dst within cutoff = diameter*2 hops (main component if disconnected),

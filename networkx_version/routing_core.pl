@@ -7,6 +7,7 @@
 :- dynamic pathsCandidates/2.
 :- dynamic speedOfLight/1.
 :- dynamic pcktSize/2.
+:- set_prolog_flag(stack_limit, 8 000 000 000).
 
 node_qtime(Node, 0) :- host(Node, _).
 node_qtime(Node, QTime) :- router(Node, QTime).
@@ -25,6 +26,15 @@ crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings, Failed) :-
 crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings, [routing(FlowId, PathId)|Failed]) :-
     crRouting(Tail, OldRoutings, NewRoutings, Failed).
 crRouting([], NewValidRoutings, NewValidRoutings, []).
+
+exhaustiveRouting(Flows, OldRoutings, Solutions) :-
+    findall(Perm, permutation(Flows, Perm), Perms),
+    loop(Perms, OldRoutings, Solutions).
+ 
+loop([P|Perms],OldRoutings, [NewRoutings|Sols]) :-
+    crRouting(P, OldRoutings, NewRoutings, _),
+    loop(Perms, OldRoutings, Sols).
+loop([], _, []).
 
 reRoute(FlowId, Routings, NextPathId) :-
     nextCandidate(FlowId, NextPathId), 

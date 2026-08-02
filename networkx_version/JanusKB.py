@@ -160,7 +160,40 @@ class JanusKB:
         except Exception as e:
             logger.error(f"Error in recalculation: {e}")
             raise JanusKBError(f"Error in recalculation: {e}")
-        
+
+    def query_exhaustive_routings(self, koflows: List[Routing], okflows: List[Routing]) -> List[List[Routing]]:
+        """
+        Run exhaustiveRouting/3 and return every permutation's routing list
+        (len(koflows)! of them), UNRESOLVED to a single winner. Failed flows
+        per permutation aren't included (routing_core.pl's loop/3 discards
+        them) -- derive via set difference against koflows if needed.
+        Raises JanusKBError on failure.
+        """
+        ko_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in koflows]
+        ok_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in okflows]
+
+        ko_list = f"[{', '.join(ko_terms)}]"
+        ok_list = f"[{', '.join(ok_terms)}]"
+
+        query = f"""
+            exhaustiveRouting({ko_list}, {ok_list}, _Sols),
+            findall(_S,
+                    ( member(_R, _Sols),
+                      findall(_{{flowId: _F, pathId: _P}}, member(routing(_F, _P), _R), _S) ),
+                    Solutions).
+        """
+
+        try:
+            result = j.query_once(query)
+            solutions = [
+                [Routing(flow_id=d["flowId"], path_id=d["pathId"]) for d in sol]
+                for sol in result["Solutions"]
+            ]
+            return solutions
+        except Exception as e:
+            logger.error(f"Error in exhaustive recalculation: {e}")
+            raise JanusKBError(f"Error in exhaustive recalculation: {e}")
+
     def get_routings(self):
         """
         Return all routings joined with their path nodes as raw KB bindings.
