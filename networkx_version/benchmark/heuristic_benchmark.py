@@ -3,6 +3,7 @@ import os
 import sys
 import time
 import random
+import subprocess
 import tempfile
 import itertools
 import logging
@@ -319,6 +320,12 @@ def main():
     total_rows    = total_batches * len(PCT_MODS) * EPOCHS
     print(f"Launching {total_batches} batches → {total_rows} rows "
           f"({len(PCT_MODS)} pct × {EPOCHS} epochs each) | {NUM_WORKERS} parallel workers | batch timeout {BATCH_TIMEOUT}s")
+
+    # self-describing log
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+                             capture_output=True, text=True).stdout.strip()
+    print(f"commit={commit} | STRATEGIES={STRATEGIES} | RR_LINK_BW_RANGE={RR_LINK_BW_RANGE} "
+          f"| IAAG_BW_SCALE={IAAG_BW_SCALE} | SIZES={SIZES} | NUM_FLOWS_LIST={NUM_FLOWS_LIST}")
 
     # sliding window: keeps exactly NUM_WORKERS batches active.
     # ObjectRef -> (config, launch time), the latter only for the elapsed-time print.
