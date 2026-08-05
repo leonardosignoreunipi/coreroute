@@ -19,11 +19,13 @@ SEEDS = [104730, 224737, 350377, 479915, 611953, 742073, 871871, 1003001, 123456
 SIZES          = [20, 25, 30, 35, 40]
 NUM_FLOWS_LIST = [3, 4, 5, 6]
 PCT_MODS       = [0.2, 0.5, 0.9]
+CLASSICAL_PCT_MODS = [0.05, 0.1, 0.2, 0.35, 0.5]
+DEGRADE_FACTOR = (0.1, 1.5)
 EPOCHS         = 10
 STRATEGIES     = ["latency_biased_paths", "biased_k_shortest_path_latency", "biased_k_shortest_path"]#, "exhaustive_optimal"
 INIT_STRATEGY  = "biased_k_shortest_path_latency"
 #scaling factors for bandwidths demand
-RR_LINK_BW_RANGE = (10.0, 30.0)
+RR_LINK_BW_RANGE = (15.0, 35.0)
 IAAG_BW_SCALE = 0.2           
 
 
@@ -145,6 +147,28 @@ def _perturb_epoch(network, kb, engine, pct_mod: float, rng: random.Random) -> i
     _apply_bandwidth(network, kb, changes)
     return len(changes)
 
+def _classic_perturbation (network, kb, engine, pct_mod: float, rng: random.Random) -> int:
+    """
+    Break one router-router edge on a pct_mod share of all edges, forcing each below its required bandwidth.
+
+    Returns:
+        Number of edges actually hit (a target is skipped if its path has
+        no router-router edge).
+    """
+    rr_edges = [(u, v) for u, v in network.graph.edges() if not (u.startswith("h") or v.startswith("h"))]
+    
+    targets = rng.sample(rr_edges, min(max(1, int(pct_mod * len(rr_edges))), len(rr_edges)))
+
+    changes = []
+    for u, v in targets:
+        old_bw = network.graph[u][v]["bw"]
+        new_bw = old_bw * rng.uniform(*DEGRADE_FACTOR)
+        if new_bw > network.graph[u][v]["bw_nominal"]:
+            new_bw = network.graph[u][v]["bw_nominal"]
+        changes.append((u, v, new_bw))
+
+    _apply_bandwidth(network, kb, changes)
+    return len(changes)
 
 def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
     """
