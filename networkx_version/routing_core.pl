@@ -7,7 +7,7 @@
 :- dynamic pathsCandidates/2.
 :- dynamic speedOfLight/1.
 :- dynamic pcktSize/2.
-:- set_prolog_flag(stack_limit, 8 000 000 000).
+:- set_prolog_flag(stack_limit, 12 000 000 000).
 
 node_qtime(Node, 0) :- host(Node, _).
 node_qtime(Node, QTime) :- router(Node, QTime).
