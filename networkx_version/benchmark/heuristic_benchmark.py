@@ -18,15 +18,17 @@ logger = logging.getLogger(__name__)
 SEEDS = [104730, 224737, 350377, 479915, 611953, 742073, 871871, 1003001, 1234567, 15485863]
 SIZES          = [20, 25, 30, 35, 40]
 NUM_FLOWS_LIST = [3, 4, 5, 6]
-PCT_MODS       = [0.2, 0.5, 0.9]
-CLASSICAL_PCT_MODS = [0.05, 0.1, 0.2, 0.35, 0.5]
-DEGRADE_FACTOR = (0.1, 1.5)
+# calibrati su calibrate_classic_perturbation.py round 2 (5 seed, n=30):
+# 0.15/0.25/0.35 -> 44.7%/68.3%/74.0% epoche con KO, no_path/KO sempre <=5%
+PCT_MODS       = [0.15, 0.25, 0.35]
+DEGRADE_FACTOR = (0.05, 0.3)
 EPOCHS         = 10
 STRATEGIES     = ["latency_biased_paths", "biased_k_shortest_path_latency", "biased_k_shortest_path"]#, "exhaustive_optimal"
 INIT_STRATEGY  = "biased_k_shortest_path_latency"
+PERTURBATION   = "classic"  # solo per il log auto-descrittivo -- tenere allineato a _run_epoch
 #scaling factors for bandwidths demand
 RR_LINK_BW_RANGE = (15.0, 35.0)
-IAAG_BW_SCALE = 0.2           
+IAAG_BW_SCALE = 0.2
 
 
 class heuristic_benchmark_exception(Exception):
@@ -173,8 +175,9 @@ def _classic_perturbation (network, kb, engine, pct_mod: float, rng: random.Rand
 def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
     """
     Run one perturbation-and-measure cycle: reset bandwidth to nominal,
-    apply this epoch's own targeted perturbation, then measure continuous
-    reasoning.
+    apply this epoch's classic perturbation (a random pct_mod share of all
+    router-router links degraded, independent of who is routed where), then
+    measure continuous reasoning.
 
     Bandwidth resets every epoch so damage never accumulates; routing
     itself persists, which is the point of "continuous" reasoning. Only CR
@@ -186,7 +189,7 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
         reconfiguration cost, latency).
     """
     _reset_to_nominal(network, kb, rr_edges)
-    n_links = _perturb_epoch(network, kb, engine, pct_mod, rng)
+    n_links = _classic_perturbation(network, kb, engine, pct_mod, rng)
     pre     = _active_routes(kb)
 
     t_cr, (_, n_ko, n_r, no_path_count_cr) = _timed(ctrl.continuous_reasoning)
@@ -348,8 +351,10 @@ def main():
     # self-describing log
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
                              capture_output=True, text=True).stdout.strip()
-    print(f"commit={commit} | STRATEGIES={STRATEGIES} | RR_LINK_BW_RANGE={RR_LINK_BW_RANGE} "
-          f"| IAAG_BW_SCALE={IAAG_BW_SCALE} | SIZES={SIZES} | NUM_FLOWS_LIST={NUM_FLOWS_LIST}")
+    print(f"commit={commit} | STRATEGIES={STRATEGIES} | PERTURBATION={PERTURBATION} "
+          f"| PCT_MODS={PCT_MODS} | DEGRADE_FACTOR={DEGRADE_FACTOR} "
+          f"| RR_LINK_BW_RANGE={RR_LINK_BW_RANGE} | IAAG_BW_SCALE={IAAG_BW_SCALE} "
+          f"| SIZES={SIZES} | NUM_FLOWS_LIST={NUM_FLOWS_LIST}")
 
     # sliding window: keeps exactly NUM_WORKERS batches active.
     # ObjectRef -> (config, launch time), the latter only for the elapsed-time print.
