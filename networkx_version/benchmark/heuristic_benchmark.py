@@ -15,15 +15,13 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 logger = logging.getLogger(__name__)
 
-SEEDS = [104730, 224737, 350377, 479915, 611953, 742073, 871871, 1003001, 1234567, 15485863]
+SEEDS = [104730, 224741, 350377, 479915, 611953, 742073, 871871, 1003001, 1234567, 15485863]
 SIZES          = [20, 25, 30, 35, 40]
 NUM_FLOWS_LIST = [3, 4, 5, 6]
-# calibrati su calibrate_classic_perturbation.py round 2 (5 seed, n=30):
-# 0.15/0.25/0.35 -> 44.7%/68.3%/74.0% epoche con KO, no_path/KO sempre <=5%
-PCT_MODS       = [0.15, 0.25, 0.35]
+PCT_MODS       = [0.25, 0.35, 0.45] #se vado oltre questo pctmod si alzano troppo i no_path_count se non garantisco un alternativa l'esperimento perde di senso
 DEGRADE_FACTOR = (0.05, 0.3)
 EPOCHS         = 10
-STRATEGIES     = ["latency_biased_paths", "biased_k_shortest_path_latency", "biased_k_shortest_path"]#, "exhaustive_optimal"
+STRATEGIES     = ["latency_biased_paths", "biased_k_shortest_path_latency", "biased_k_shortest_path", "exhaustive_optimal"]
 INIT_STRATEGY  = "biased_k_shortest_path_latency"
 PERTURBATION   = "classic"  # solo per il log auto-descrittivo -- tenere allineato a _run_epoch
 #scaling factors for bandwidths demand
@@ -70,7 +68,7 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
     INIT does not route every flow.
 
     Returns:
-        (network, kb, engine, ctrl, init_routed): the built collaborators
+        (network, kb, engine, ctrl): the built collaborators
         and the number of flows routed at INIT.
     """
     sys.path.insert(0, str(REPO_ROOT))
@@ -102,7 +100,11 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
     engine.STRATEGY = getattr(engine, INIT_STRATEGY)
     engine.prolog_strategy = engine.resolve_cr_routing
     t_init, (nvr, f_ko, f_rr, f_no_path) = _timed(ctrl.full_recompute)
-
+    
+    if f_rr < num_flows:
+        logger.error(f"[{strategy} {topology} n={n} seed={seed}] INIT failed: only {f_rr}/{num_flows} flows routed")
+        raise heuristic_benchmark_exception(f"The experiment starts with {f_rr} routing\nabort experiment")
+    
     logger.info(f"[{strategy} {topology} n={n} seed={seed}] INIT ({INIT_STRATEGY}) "f"in {t_init:.2f}s | routed {len(nvr)}/{num_flows}")
 
     # from here on the strategy under test drives every CR and FULL
@@ -113,10 +115,8 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
         engine.STRATEGY = getattr(engine, strategy)
         engine.prolog_strategy = engine.resolve_cr_routing
 
-    if f_rr < num_flows:
-        logger.error(f"[{strategy} {topology} n={n} seed={seed}] INIT failed: only {f_rr}/{num_flows} flows routed")
-        raise heuristic_benchmark_exception(f"The experiment starts with {f_rr} routing\nabort experiment")
-    return network, kb, engine, ctrl, f_rr
+    
+    return network, kb, engine, ctrl
 
 
 def _perturb_epoch(network, kb, engine, pct_mod: float, rng: random.Random) -> int:
@@ -197,6 +197,8 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
 
     return {
         "T_CR": t_cr,
+        "T_generate_candidates": engine.last_time_strategy,   # Stage 1 (NetworkX)
+        "T_prolog_strategy": engine.last_time_prolog_strategy,
         "N_KO": n_ko, 
         "N_RR": n_r,
         "n_links_fired": n_links,
@@ -210,7 +212,7 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
 _ROW_FIELDS = [
     "strategy", "topology", "n", "seed", "init_routed",
     "pct_mod", "epoch", "num_edges", "num_flows",
-    "T_CR", "N_KO", "N_RR", "n_links_fired", "no_path_count",
+    "T_CR", "T_generate_candidates", "T_prolog_strategy", "N_KO", "N_RR", "n_links_fired", "no_path_count",
     "diff_simm_tot", "flows_changed", "avg_latency", "P_KO", "P_R",
     "ok", "error",
 ]
@@ -260,7 +262,7 @@ def _run_batch(config_base: dict) -> list:
     try:
         fd, topo_file = tempfile.mkstemp(suffix=".json")
         os.close(fd)
-        network, kb, engine, ctrl, init_routed = _build_system(topology, n, num_flows, seed, topo_file, strategy)
+        network, kb, engine, ctrl = _build_system(topology, n, num_flows, seed, topo_file, strategy)
 
         num_edges = len(network.graph.edges)
         sizes = {"num_edges": num_edges, "num_flows": num_flows}

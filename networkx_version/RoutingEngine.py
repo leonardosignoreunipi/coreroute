@@ -37,6 +37,8 @@ class RoutingEngine:
         self._pr = pr()
         self.STRATEGY = self.biased_k_shortest_path_latency
         self.prolog_strategy = self.resolve_cr_routing
+        self.last_time_strategy = 0.0
+        self.last_time_prolog_strategy = 0.0
         
     def path_latency(self, nodes: list[str]) -> float:
         """
@@ -189,11 +191,17 @@ class RoutingEngine:
 
         if len(ko_flows) == 0:
             logger.info("No koFlows")
+            self.last_time_strategy = 0.0
+            self.last_time_prolog_strategy = 0.0
             return ok_flows, [], 0
-
+        t0 = time.perf_counter()
         no_path_count = self._generate_candidates(ko_flows)
+        self.last_time_strategy = time.perf_counter() - t0 #save time execution of the generation candidates strategy
 
+        t0 = time.perf_counter()
         new_valid, failed = self.prolog_strategy(ko_flows, ok_flows)
+        self.last_time_prolog_strategy = time.perf_counter() - t0 #save time execution of the rerouting strategy (crRouting or exhaustiveRouting)
+        
         return new_valid, failed, no_path_count
 
     def resolve_cr_routing(self, ko_flows: list[Routing], ok_flows: list[Routing]):
