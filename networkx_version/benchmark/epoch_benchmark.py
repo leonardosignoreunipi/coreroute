@@ -43,6 +43,7 @@ import os
 import sys
 import time
 import random
+import subprocess
 import tempfile
 import itertools
 import logging
@@ -63,18 +64,20 @@ REPO_ROOT     = BENCHMARK_DIR.parent
 KB_FILE       = str(REPO_ROOT / "routing_core.pl")
 RESULTS_DIR   = BENCHMARK_DIR / "results"
 
-SEEDS          = [104730, 224737, 611953, 742073, 871871] # 350377, 479915, 1003001, 1234567, 15485863
+SEEDS          = [913067, 224737, 611953, 742073, 871871, 350377, 479915, 1003001, 1234567, 15485863]
 TOPOLOGIES     = ["er", "ba", "iaag"]
 SIZES          = [250, 500, 750, 1000]
 FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
 EPOCHS         = 20
 DEGRADE_FACTOR = (0.5, 1.5)
-INIT_TOLERANCE = 0.01
+STRATEGY       = "biased_k_shortest_path"  # cambiare a mano tra un lancio e l'altro, come RoutingEngine.STRATEGY
 
 _ROW_DEFAULTS = {
     "num_nodes": None, "num_edges": None, "num_flows": None,
     "T_CR": None, "T_FULL": None,
+    "T_generate_candidates_CR": None, "T_prolog_strategy_CR": None,
+    "T_generate_candidates_FULL": None, "T_prolog_strategy_FULL": None,
     "N_KO_CR": None, "N_R_CR": None, "N_KO_FULL": None, "N_R_FULL": None,
     "P_KO": None, "P_R": None, "Speedup": None,
     "n_links_epoch": None, "frac_rr_degraded": None,
@@ -196,9 +199,12 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
     pre     = _active_routes(kb)
 
     t_cr, (_, n_ko, n_r, no_path_count_cr) = _timed(ctrl.continuous_reasoning)
+    # letti SUBITO: full_recompute piu' sotto chiama re_routing e sovrascrive gli stessi due attributi
+    t_gen_cr, t_prolog_cr = engine.last_time_strategy, engine.last_time_prolog_strategy
 
     measures = {
         "T_CR": t_cr,
+        "T_generate_candidates_CR": t_gen_cr, "T_prolog_strategy_CR": t_prolog_cr,
         "N_KO_CR": n_ko, "N_R_CR": n_r,
         "n_links_epoch": n_links,
         "frac_rr_degraded": frac,
@@ -211,11 +217,13 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
 
     # FULL: throwaway what-if, measured then discarded
     t_full, (_, n_full_ko, n_full_r, no_path_count_full) = _timed(ctrl.full_recompute)
+    t_gen_full, t_prolog_full = engine.last_time_strategy, engine.last_time_prolog_strategy
     metrics_full = _compute_metrics(pre, _active_routes(kb), engine)
     kb.restore_kb_state(snapshot_cr)
 
     measures.update({
             "T_FULL": t_full,
+            "T_generate_candidates_FULL": t_gen_full, "T_prolog_strategy_FULL": t_prolog_full,
             "N_KO_FULL": n_full_ko, "N_R_FULL": n_full_r,
             "Speedup": t_full / t_cr if t_cr > 0 else float("inf"),
             "diff_simm_tot_FULL": metrics_full["diff_simm_tot"],
@@ -257,16 +265,14 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
 
     kb.clear_kb()
     kb.initialize_kb()
-    nvr, f_ko, f_rr, f_no_path = ctrl.full_recompute()  # INIT: route every flow once
+    nvr, f_ko, f_rr, f_no_path = ctrl.full_recompute()  # INIT: route every flow once, strategia di default fissa
 
-    # La soglia di accettazione e' decisa da _run_batch, non qui: cosi' il
-    # conteggio raggiunge il CSV anche quando il batch viene scartato.
     if len(nvr) != num_flows:
-        logger.warning(f"[{topology} n={n} seed={seed}] INIT incompleta: "
-                       f"{len(nvr)}/{num_flows} instradati ({num_flows - len(nvr)} falliti, "
-                       f"{f_no_path} senza cammino con banda sufficiente)")
+        logger.error(f"[{topology} n={n} seed={seed}] INIT incompleta: " f"{len(nvr)}/{num_flows} instradati ({num_flows - len(nvr)} falliti, " f"{f_no_path} senza cammino con banda sufficiente)")
+        raise epoch_benchmark_exception(f"INIT failed: not all flows routed topology {topology} n={n} seed={seed} routed={len(nvr)}/{num_flows} no_path={f_no_path}")
 
-    return network, kb, engine, ctrl, len(nvr), f_no_path
+    engine.STRATEGY = getattr(engine, STRATEGY)  # da qui in poi la strategia sotto test guida CR e FULL
+    return network, kb, engine, ctrl, len(nvr)
 
 
 def _run_batch(config_base: dict) -> list:
@@ -287,27 +293,16 @@ def _run_batch(config_base: dict) -> list:
     pct_mods    = config_base.get("pct_mods", PCT_MODS)
     epochs      = config_base.get("epochs", EPOCHS)
     
-    base = {"topology": topology, "n": n, "flow_factor": flow_factor, "seed": seed,
-            "init_routed": None, "init_no_path": None}
+    base = {"strategy": STRATEGY, "topology": topology, "n": n, "flow_factor": flow_factor, "seed": seed, "init_routed": None}
     results   = []
     topo_file = None
 
     try:
         fd, topo_file = tempfile.mkstemp(suffix=".json")
         os.close(fd)
-        network, kb, engine, ctrl, init_routed, init_no_path = _build_system(topology, n, num_flows, seed, topo_file)
+        network, kb, engine, ctrl, init_routed = _build_system(topology, n, num_flows, seed, topo_file)
         base["init_routed"]  = init_routed
-        base["init_no_path"] = init_no_path
-
-        max_falliti = max(1, int(INIT_TOLERANCE * num_flows))
-        if num_flows - init_routed > max_falliti:
-            raise epoch_benchmark_exception(
-                f"INIT oltre tolleranza: {init_routed}/{num_flows} instradati "
-                f"({num_flows - init_routed} falliti > {max_falliti} ammessi)")
-
-        num_nodes = len(network.graph.nodes)
-        num_edges = len(network.graph.edges)
-        sizes = {"num_nodes": num_nodes, "num_edges": num_edges, "num_flows": num_flows}
+        sizes = {"num_nodes": len(network.graph.nodes), "num_edges": len(network.graph.edges), "num_flows": num_flows}
 
         # router-router edges; string-prefix coupling to the h*/r* naming
         rr_edges = [(u, v) for u, v in network.graph.edges() if not (u.startswith("h") or v.startswith("h"))]
@@ -353,7 +348,7 @@ if __name__ == "__main__":
     RESULTS_DIR.mkdir(exist_ok=True)
     NUM_WORKERS = 7
 
-    OUTPUT_CSV = sys.argv[1] if len(sys.argv) > 1 else "benchmark.csv"
+    OUTPUT_CSV = sys.argv[1] if len(sys.argv) > 1 else f"benchmark.csv"
 
     ray.init(num_cpus=NUM_WORKERS)
 
@@ -366,6 +361,9 @@ if __name__ == "__main__":
     print(f"Launching {total_batches} batches → {total_rows} rows "
           f"({len(PCT_MODS)} pct × {EPOCHS} epochs each) | {NUM_WORKERS} parallel workers")
 
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
+                             capture_output=True, text=True).stdout.strip()
+    print(f"commit={commit} | STRATEGY={STRATEGY} | SEEDS={SEEDS} | SIZES={SIZES} " f"| FLOW_FACTORS={FLOW_FACTORS} | PCT_MODS={PCT_MODS} | DEGRADE_FACTOR={DEGRADE_FACTOR}")
     # sliding window: keeps exactly NUM_WORKERS batches active
     config_iter = iter(all_configs)
     active      = [run_trial_batch.remote(cfg)
