@@ -71,7 +71,7 @@ FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
 EPOCHS         = 20
 DEGRADE_FACTOR = (0.5, 1.5)
-STRATEGY       = "biased_k_shortest_path"  # cambiare a mano tra un lancio e l'altro, come RoutingEngine.STRATEGY
+STRATEGY       = "biased_k_shortest_path_latency"
 
 _ROW_DEFAULTS = {
     "num_nodes": None, "num_edges": None, "num_flows": None,
@@ -361,8 +361,7 @@ if __name__ == "__main__":
     print(f"Launching {total_batches} batches → {total_rows} rows "
           f"({len(PCT_MODS)} pct × {EPOCHS} epochs each) | {NUM_WORKERS} parallel workers")
 
-    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
-                             capture_output=True, text=True).stdout.strip()
+    commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT, capture_output=True, text=True).stdout.strip()
     print(f"commit={commit} | STRATEGY={STRATEGY} | SEEDS={SEEDS} | SIZES={SIZES} " f"| FLOW_FACTORS={FLOW_FACTORS} | PCT_MODS={PCT_MODS} | DEGRADE_FACTOR={DEGRADE_FACTOR}")
     # sliding window: keeps exactly NUM_WORKERS batches active
     config_iter = iter(all_configs)
