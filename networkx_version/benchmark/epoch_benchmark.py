@@ -71,7 +71,7 @@ FLOW_FACTORS   = [0.25, 0.50, 0.75, 1.00]
 PCT_MODS       = [0.10, 0.20, 0.30, 0.50]
 EPOCHS         = 20
 DEGRADE_FACTOR = (0.5, 1.5)
-STRATEGY       = "biased_k_shortest_path_latency"
+STRATEGY       = "latency_biased_paths"
 
 _ROW_DEFAULTS = {
     "num_nodes": None, "num_edges": None, "num_flows": None,
