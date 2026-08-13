@@ -16,3 +16,5 @@ rustworkx_version/benchmark/*.pdf
 networkx_version/benchmark/results
 CLAUDE.md
 calibrate_parameters
+*.png
+grafici.py

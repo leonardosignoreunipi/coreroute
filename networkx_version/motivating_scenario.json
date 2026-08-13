@@ -1,0 +1,60 @@
+{
+  "constants": {
+    "SPEED_OF_LIGHT": 200000.0,
+    "PCKT_SIZE": 0.012
+  },
+  "flows": [
+    {
+      "id": "f0",
+      "src_service": "s1",
+      "dst_service": "s2",
+      "max_latency": 0.012,
+      "rate": 500.0
+    },
+    {
+      "id": "f1",
+      "src_service": "s1",
+      "dst_service": "s2",
+      "max_latency": 0.012,
+      "rate": 500.0
+    }
+  ],
+  "routers": [
+    {"id": "r1", "qtime": 0.0},
+    {"id": "r2", "qtime": 0.0},
+    {"id": "r3", "qtime": 0.0},
+    {"id": "r4", "qtime": 0.0},
+    {"id": "r5", "qtime": 0.0},
+    {"id": "r6", "qtime": 0.0},
+    {"id": "r7", "qtime": 0.0},
+    {"id": "r8", "qtime": 0.0}
+  ],
+  "hosts": [
+    {"id": "h1", "services": ["s1"]},
+    {"id": "h2", "services": ["s2"]}
+  ],
+  "links": [
+    {"src": "h1", "dst": "r1", "bw": 100.0, "bw_nominal": 100.0, "length": 1.0},
+    {"src": "r1", "dst": "r2", "bw": 10.0, "bw_nominal": 10.0, "length": 400.0},
+    {"src": "r1", "dst": "r4", "bw": 10.0, "bw_nominal": 10.0, "length": 200.0},
+    {"src": "r1", "dst": "r5", "bw": 10.0, "bw_nominal": 10.0, "length": 600.0},
+    {"src": "r2", "dst": "r3", "bw": 5.0,  "bw_nominal": 5.0,  "length": 600.0},
+    {"src": "r2", "dst": "r7", "bw": 10.0, "bw_nominal": 10.0, "length": 200.0},
+    {"src": "r7", "dst": "r3", "bw": 10.0, "bw_nominal": 10.0, "length": 200.0},
+    {"src": "r2", "dst": "r8", "bw": 10.0, "bw_nominal": 10.0, "length": 800.0},
+    {"src": "r8", "dst": "r3", "bw": 10.0, "bw_nominal": 10.0, "length": 800.0},
+    {"src": "r3", "dst": "r4", "bw": 10.0, "bw_nominal": 10.0, "length": 400.0},
+    {"src": "r4", "dst": "r6", "bw": 10.0, "bw_nominal": 10.0, "length": 600.0},
+    {"src": "r5", "dst": "r6", "bw": 10.0, "bw_nominal": 10.0, "length": 400.0},
+    {"src": "r4", "dst": "h2", "bw": 100.0, "bw_nominal": 100.0, "length": 1.0}
+  ],
+  "paths": [
+    {"id": "p_init", "src": "none", "dst": "none", "nodes": []},
+    {"id": "p1", "src": "h1", "dst": "h2", "nodes": ["h1", "r1", "r2", "r3", "r4", "h2"]},
+    {"id": "p2", "src": "h1", "dst": "h2", "nodes": ["h1", "r1", "r5", "r6", "r4", "h2"]}
+  ],
+  "routings": [
+    {"flow_id": "f0", "path_id": "p1"},
+    {"flow_id": "f1", "path_id": "p2"}
+  ]
+}
