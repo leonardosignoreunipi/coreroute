@@ -36,7 +36,7 @@
   "links": [
     {"src": "h1", "dst": "r1", "bw": 100.0, "bw_nominal": 100.0, "length": 1.0},
     {"src": "r1", "dst": "r2", "bw": 10.0, "bw_nominal": 10.0, "length": 400.0},
-    {"src": "r1", "dst": "r4", "bw": 10.0, "bw_nominal": 10.0, "length": 200.0},
+    {"src": "r1", "dst": "r4", "bw": 10.0, "bw_nominal": 10.0, "length": 1000.0},
     {"src": "r1", "dst": "r5", "bw": 10.0, "bw_nominal": 10.0, "length": 600.0},
     {"src": "r2", "dst": "r3", "bw": 5.0,  "bw_nominal": 5.0,  "length": 600.0},
     {"src": "r2", "dst": "r7", "bw": 10.0, "bw_nominal": 10.0, "length": 200.0},
