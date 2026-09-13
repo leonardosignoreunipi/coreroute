@@ -42,7 +42,7 @@ import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
 
-PLOT_DIR = "FINALFINALS"
+PLOT_DIR = "graphs"
 FILE_CSV = "benchmark_biased_k_shortest_path_latency.csv"
 
 # Assicuriamoci che la cartella di destinazione esista
@@ -56,17 +56,17 @@ def get_time_data(df):
 
 # 2. Dati aggregati per time3 (includendo epoch)
 def get_Tepoch_data(df):
-    group_cols = ["topology", "n", "flow_factor", "pct_mod", "epoch"]
+    group_cols = ["topology", "n", "pct_mod", "epoch"]
     time_metrics = ["T_CR", "T_FULL", "Speedup"]
     return df.groupby(group_cols)[time_metrics].mean().reset_index()
 
 def get_failed_data(df):
-    df["failed_CR"] = df["N_KO_CR"] - df["N_R_CR"] - df["no_path_count_CR"]
-    df["failed_FULL"] = df["N_KO_FULL"] - df["N_R_FULL"] - df["no_path_count_FULL"]
+    df["failed_CR"] = ((df["N_KO_CR"] - df["N_R_CR"]) / df["num_flows"]) * 100
+    df["failed_FULL"] = ((df["N_KO_FULL"] - df["N_R_FULL"]) / df["num_flows"]) * 100
     
     metrics = ["failed_CR", "failed_FULL"]
     
-    group_cols = ["topology", "n", "flow_factor", "pct_mod", "epoch"]
+    group_cols = ["topology", "n", "flow_factor", "pct_mod"]
     df_failed = df.groupby(group_cols)[metrics].mean().reset_index()
     
     return df_failed
@@ -114,7 +114,7 @@ def get_flows_vs_time_data(df_changed):
     # 2. Ramo FULL
     df_full = df_changed[keys + ["pct_flows_changed_FULL","flows_changed_FULL", "T_FULL"]].copy()
     df_full = df_full.rename(columns={"flows_changed_FULL": "flows_changed", "T_FULL": "time", "pct_flows_changed_FULL": "pct_flows_changed"})
-    df_full["method"] = "FULL"
+    df_full["method"] = "From Scratch"
     
     # 3. Unione verticale
     df_combined = pd.concat([df_cr, df_full], ignore_index=True)
@@ -136,9 +136,11 @@ def get_symm_dist_failed(df):
     
     df_full = df_tmp.copy()
     df_full = df_full.rename(columns={"diff_simm_tot_FULL": "diff_simm", "avg_latency_FULL": "avg_latency"})
-    df_full["method"] = "FULL"
+    df_full["method"] = "From Scratch"
     
     df_combined = pd.concat([df_cr, df_full], ignore_index=True)
+    
+    df_combined = df_combined[df_combined["pct_mod"].isin([0.5]) & df_combined["flow_factor"].isin([1.0]) & df_combined["epoch"].isin([19])]
     
     return df_combined
 
@@ -239,7 +241,7 @@ def speedup_vs_epoch():
         data=df_epoch,         
         x="epoch",
         y="Speedup",                
-        hue="flow_factor",
+        hue="pct_mod",
         col="topology", 
         row="n",
         kind="line",
@@ -309,60 +311,31 @@ def time5():
     g.set(xticks=sorted(df["flow_factor"].unique()))
     g.savefig(os.path.join(PLOT_DIR, "timeplot_flowfactor.png"), dpi=300)
     
-def failed1():
-    df_melted = df_failed.melt(
-        id_vars=["topology", "n", "flow_factor", "pct_mod"],   
-        value_vars=["failed_CR", "failed_FULL"],                        
-        var_name="method", #nuova colonna che conterrà T_CR/T_FULL.
-        value_name="num_failed" #nuova colonna che contiene il tempo.
-        )
-    
-    g = sns.relplot(
-        data=df_melted,         
-        x="n",
-        y="num_failed",                
-        hue="method",
-        col="topology", 
-        row="flow_factor",
-        kind="line",
-        markers=True,
-        height=3,
-        palette="colorblind",
-        errorbar=None,
-        aspect=1.2
-    )
-    
-    g.set_axis_labels(x_var="nodes", y_var="flows failed")
-    g.set(xticks=sorted(df["n"].unique()))
-    g.savefig(os.path.join(PLOT_DIR, "failed_nodes.png"), dpi=300)
-    
 def lineplot_reroutefailed():
-    
-    
-    
     df_melted = df_failed.melt(
-        id_vars=["topology", "n", "flow_factor", "pct_mod"],   
-        value_vars=["failed_CR", "failed_FULL"],                        
-        var_name="method", #nuova colonna che conterrà T_CR/T_FULL.
-        value_name="num_failed" #nuova colonna che contiene il tempo.
+        id_vars=["topology", "n", "flow_factor", "pct_mod"],
+        value_vars=["failed_CR", "failed_FULL"],
+        var_name="method",
+        value_name="num_failed"
         )
-    
-    df_filtrato = df_melted[df_melted["pct_mod"].isin([0.1, 0.3, 0.5])]
-    
+
+    df_filtrato = df_melted[df_melted["pct_mod"].isin([0.1, 0.3, 0.5])].copy()
+
     df_filtrato["method"] = df_filtrato["method"].replace({
-        "pct_mod": "(%) Perturbation",
         "failed_CR": "CR",
-        "failed_FULL": "FULL"
+        "failed_FULL": "From Scratch"
     })
-    
+    df_filtrato["pct_mod"] = df_filtrato["pct_mod"].map(lambda p: f"{int(p * 100)}%")
+    df_filtrato = df_filtrato.rename(columns={"method": "Method", "pct_mod": "Perturbation"})
+
     g = sns.relplot(
-        data=df_filtrato,         
+        data=df_filtrato,
         x="flow_factor",
-        y="num_failed",                
-        hue="method",
-        col="topology", 
+        y="num_failed",
+        hue="Method",
+        col="topology",
         row="n",
-        style="pct_mod",
+        style="Perturbation",
         kind="line",
         markers=True,
         height=3,
@@ -371,8 +344,8 @@ def lineplot_reroutefailed():
         facet_kws={'sharex': False},
         aspect=1.2
     )
-    
-    g.set_axis_labels(x_var="(%) Perturbation", y_var="Route failed")
+
+    g.set_axis_labels(x_var="Flow Factor", y_var="(%) Flows Left Broken")
     g.set(xticks=sorted(df["flow_factor"].unique()))
     g.savefig(os.path.join(PLOT_DIR, "failed_numflows.png"), dpi=300)
     
@@ -500,7 +473,7 @@ def flow_changed_time_denso():
             df_tmp["pct_flows_changed_CR"] = 100 * (df_tmp["flows_changed_CR"] / df_tmp["num_flows"])
             df_tmp["pct_flows_changed_FULL"] = 100 * (df_tmp["flows_changed_FULL"] / df_tmp["num_flows"])
         
-            cols = ["topology", "n", "flow_factor", "pct_mod", "epoch","seed"]
+            cols = ["topology", "n", "flow_factor", "pct_mod", "epoch"]
         
             # 1. Ramo CR
             df_cr = df_tmp[cols + ["pct_flows_changed_CR", "flows_changed_CR", "T_CR"]].copy()
@@ -518,18 +491,18 @@ def flow_changed_time_denso():
                 "T_FULL": "time",
                 "pct_flows_changed_FULL": "pct_flows_changed"
             })
-            df_full["method"] = "FULL"
+            df_full["method"] = "From Scratch"
         
             return pd.concat([df_cr, df_full], ignore_index=True)
-        
+    data = get_flows_vs_time_data_raw(df)
+    data = data[data["flow_factor"].isin([1.0]) & data["pct_mod"].isin([0.5]) & data["epoch"].isin([9])]
     g = sns.relplot(
-                data=get_flows_vs_time_data_raw(df),
+                data=data,
                 x="pct_flows_changed",
                 y="time",
                 hue="method",
-                style="pct_mod",
                 row="n",
-                col="flow_factor",
+                col="topology",
                 kind="scatter",
                 markers=True,
                 height=3,
@@ -557,6 +530,28 @@ def symm_dist_delay():
     
     g.set_axis_labels(x_var="Path delay (ms)",y_var="Symm. distance")
     
+    g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300) 
+    
+def symm_dist_delay_epoch():
+    
+    df_tmp = df_symm_failed.copy()
+   
+    g = sns.relplot(
+        data=df_symm_failed,
+        x="avg_latency",
+        y="diff_simm",
+        hue="method",
+        row="n",
+        col="topology",
+        kind="scatter",
+        markers=True,
+        height=3,
+        palette="colorblind",
+        aspect=1.2
+    )
+    
+    g.set_axis_labels(x_var="Path delay (ms)",y_var="Symm. distance")
+    
     g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300)    
 
 def ko_vs_changed():
@@ -565,6 +560,11 @@ def ko_vs_changed():
         value_vars=["pct_ko_CR", "pct_changed_CR", "pct_changed_FULL"],
         var_name="serie", value_name="pct_flussi",
     )
+    df_melted["serie"] = df_melted["serie"].replace({
+        "pct_ko_CR": "KO (CR)",
+        "pct_changed_CR": "cambiati (CR)",
+        "pct_changed_FULL": "cambiati (From Scratch)",
+    })
     
     
     df_filtrato = df_melted[df_melted["n"].isin([250, 1000])]
@@ -685,6 +685,9 @@ def main():
     symm_dist_delay()
     lineplot_reroutefailed()
     speedup_vs_epoch()
+    flow_changed_time_execution()
+    ko_vs_changed()
+    time4()
     
     # Mostra a video tutte e tre le figure
     #plt.show()

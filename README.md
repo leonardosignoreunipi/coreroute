@@ -78,14 +78,14 @@ Both funnel into the same `RoutingEngine.re_routing()` — Full Recompute is Con
 
 ### Candidate-search strategies (`RoutingEngine.STRATEGY`)
 
-Four interchangeable candidate generators, all sharing the signature `(graph_pruned, src, dst, flow_id, old_path) -> list[(score, path_nodes)]`:
+Four interchangeable candidate generators, all sharing the signature `(graph_pruned, src, dst, flow_id, old_path) -> list[(score, path_nodes)]`. The short names below are also how the corresponding output lives under `benchmark/results/` (see [Repository layout](#repository-layout)):
 
-| Strategy | Candidate set | Ordered by |
-|---|---|---|
-| `biased_k_shortest_path` | K=10 shortest paths, weighted to reuse the old path | reconfiguration cost |
-| `biased_k_shortest_path_latency` | same K=10 generation as above | (reconfiguration cost, latency) |
-| `latency_biased_paths` | top 100 by per-edge latency, keep top 10 | reconfiguration cost (ties preserve latency order) |
-| `all_simple_candidates` | **all** simple paths up to `2 × diameter` hops | (reconfiguration cost, latency) |
+| Strategy | Method | Candidate set | Ordered by |
+|---|---|---|---|
+| **reuse** | `biased_k_shortest_path` | K=10 shortest paths, weighted to reuse the old path | reconfiguration cost |
+| **reuseDelay** | `biased_k_shortest_path_latency` | same K=10 generation as above | (reconfiguration cost, latency) |
+| **delay** | `latency_biased_paths` | top 100 by per-edge latency, keep top 10 | reconfiguration cost (ties preserve latency order) |
+| **exhaustive** | `all_simple_candidates` | **all** simple paths up to `2 × diameter` hops | (reconfiguration cost, latency) |
 
 "Reconfiguration cost" (`diff_score`) is the directed symmetric edge-set difference between old and new path — each differing directed edge approximates one forwarding-table update a real controller would push.
 
@@ -107,7 +107,7 @@ Four interchangeable candidate generators, all sharing the signature `(graph_pru
 
 ```bash
 git clone https://github.com/leonardosignoreunipi/tesi.git
-cd tesi/networkx_version
+cd tesi/coreroute
 python3 -m venv .venv
 source .venv/bin/activate
 pip install networkx ray pandas numpy matplotlib seaborn janus-swi
@@ -117,13 +117,7 @@ pip install networkx ray pandas numpy matplotlib seaborn janus-swi
 
 ## Quickstart
 
-`motivating_scenario_test.py` is a small, self-contained, runnable example: it loads a hand-built topology, prints the initial routing, degrades one link's bandwidth, switches the engine to the exhaustive strategy, and reroutes:
-
-```bash
-python3 motivating_scenario_test.py
-```
-
-That file is also the shortest reference for embedding CoReRoute in your own code — the five collaborators are always wired the same way:
+The five collaborators are always wired the same way — `ConfigLoader` loads a topology JSON, `PhysicalNetwork` builds the NetworkX graph, `JanusKB` boots the embedded Prolog runtime, `RoutingEngine` generates candidates, `SDNcontroller` orchestrates a reasoning step:
 
 ```python
 from ConfigLoader import ConfigLoader
@@ -132,7 +126,7 @@ from JanusKB import JanusKB
 from RoutingEngine import RoutingEngine
 from SDNcontroller import SDNcontroller
 
-config  = ConfigLoader("motivating_scenario.json").load()
+config  = ConfigLoader("topology.json").load()
 network = PhysicalNetwork(config)
 kb      = JanusKB(config, "routing_core.pl")
 engine  = RoutingEngine(network, kb, config)
@@ -141,16 +135,17 @@ ctrl    = SDNcontroller(network, kb, config, engine)
 kb.clear_kb()
 kb.initialize_kb()
 
-# ...degrade a link's bandwidth, then reroute what broke:
+# ...degrade a link's bandwidth (network.graph[u][v]["bw"] = ...,
+# kb.update_links_bandwidth([(u, v, new_bw)])), then reroute what broke:
 new_valid, n_ko, n_rerouted, no_path_count = ctrl.continuous_reasoning()
 ```
 
-Topologies are plain JSON (see `motivating_scenario.json` for the shape, or generate a synthetic one with `benchmark/build_topology.py` below).
+`topology.json` is plain JSON (hosts, routers, links, flows, paths, routings) — generate one with `benchmark/build_topology.py` (see [Running the benchmarks](#running-the-benchmarks) below), which produces exactly the shape `ConfigLoader` expects.
 
 ## Repository layout
 
 ```
-networkx_version/
+coreroute/
 ├── Models.py                    # Dataclasses: Flow, Router, Host, Link, Path, Routing
 ├── ConfigLoader.py               # Parses/validates topology JSON into TopologyConfig
 ├── PhysicalNetwork.py            # NetworkX graph wrapper; bandwidth-pruning prefilter
@@ -159,19 +154,18 @@ networkx_version/
 ├── RoutingEngine.py               # Stage 1: candidate generation, the 4 STRATEGY methods
 ├── SDNcontroller.py               # continuous_reasoning() / full_recompute()
 ├── routing_core.pl                # Stage 2: crRouting/4, exhaustiveRouting/3, validPath/3
-├── motivating_scenario.json       # Small hand-built demo topology
-├── motivating_scenario_test.py    # Runnable end-to-end example (see Quickstart)
 └── benchmark/
     ├── build_topology.py          # er / ba / iaag synthetic topology generator (CLI)
     ├── epoch_benchmark.py         # Experiment 2: Continuous Reasoning vs Full Recompute
     ├── heuristic_benchmark.py     # Experiment 1: heuristics vs. the true optimum
-    ├── plot_results.py            # Renders the figure set from a results CSV
-    ├── recover_missing_batches.py # Re-runs specific timed-out (topology, n, seed) cells
     ├── calibrate_parameters/       # One-off pilots for perturbation parameters (not thesis-citable)
-    └── results/                    # Benchmark output — regenerate, do not expect it pre-populated
+    └── results/                    # Benchmark output, one folder per experiment run
+        ├── exhaustive/             # Experiment 1: data.csv + grafici.py (its plotting script) + graphs/
+        ├── hreuse/                 # Experiment 2, reuse strategy: CSV + build_graphs.py + graphs/
+        └── hreuseDelay/            # Experiment 2, reuseDelay strategy: CSV + build_graphs.py + graphs/
 ```
 
-This is the intended layout of the *code*; see the note on generated experiment output in [Running the benchmarks](#running-the-benchmarks).
+This is the intended layout of the *code*; see the note on generated experiment output in [Running the benchmarks](#running-the-benchmarks). There is no single top-level plotting entry point — each run under `benchmark/results/` carries its own plotting script next to its data.
 
 ## Running the benchmarks
 
@@ -187,7 +181,7 @@ python benchmark/build_topology.py <er|ba|iaag> <num_nodes> <num_flows> <output.
 python benchmark/heuristic_benchmark.py heuristic_results.csv
 ```
 
-Sweeps `STRATEGIES = [latency_biased_paths, biased_k_shortest_path_latency, biased_k_shortest_path, exhaustive_optimal]` over `SIZES = [20, 25, 30, 35, 40]` × `NUM_FLOWS_LIST = [3, 4, 5, 6]` × 10 seeds × 3 topologies × 3 `pct_mod` perturbation levels × 10 epochs, and writes one row per `(strategy, topology, n, seed, pct_mod, epoch)` to `benchmark/results/`.
+Sweeps all four strategies (`delay`, `reuseDelay`, `reuse`, `exhaustive`) over `SIZES = [20, 25, 30, 35, 40]` × `NUM_FLOWS_LIST = [3, 4, 5, 6]` × 10 seeds × 3 topologies × 3 `pct_mod` perturbation levels × 10 epochs, and writes one row per `(strategy, topology, n, seed, pct_mod, epoch)` to `benchmark/results/`.
 
 ### 3. Experiment 2 — Continuous Reasoning vs. Full Recompute (large scale)
 
@@ -199,8 +193,18 @@ Sweeps 3 topologies × `SIZES = [250, 500, 750, 1000]` × `FLOW_FACTORS = [0.25,
 
 ### 4. Plot the results
 
+Each experiment folder under `benchmark/results/` carries its own plotting script next to its data — run from inside that folder:
+
 ```bash
-python benchmark/plot_results.py
+cd benchmark/results/exhaustive && python grafici.py       # Experiment 1: figures + gap tables
+```
+
+```bash
+cd benchmark/results/hreuse && python build_graphs.py      # Experiment 2, reuse strategy
+```
+
+```bash
+cd benchmark/results/hreuseDelay && python build_graphs.py # Experiment 2, reuseDelay strategy
 ```
 
 ### Notes before launching a sweep
@@ -228,7 +232,7 @@ The harness is built around a few explicit, non-negotiable conventions:
 - `all_simple_candidates` enumerates every simple path within a hop cutoff — exponential in graph size; small graphs only.
 - `crRouting/4` alone (even fed an exhaustive candidate set) is **not** a true optimum: it commits to the first feasible candidate per flow in a fixed order and never backtracks across flows. Only `exhaustiveRouting/3` (permuting that order) recovers the true optimum.
 - `no_path_count` means "no path exists in the bandwidth-pruned graph" — it is not evidence of physical network disconnection.
-- No automated test suite yet; `motivating_scenario_test.py` and the scripts under `benchmark/calibrate_parameters/` serve as manual smoke tests.
+- No automated test suite yet; the scripts under `benchmark/calibrate_parameters/` are the closest thing to manual smoke tests.
 
 ## Contributing
 
