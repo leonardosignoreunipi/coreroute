@@ -36,10 +36,10 @@ COLORI = {s: st["color"] for s, st in STRATEGY_STYLES.items()}   # scorciatoia p
 # nome completo per legende ed etichette -- come STRATEGY_STYLES, un solo punto
 # cosi' ogni figura usa lo stesso nome per la stessa strategia
 NOME_STRATEGIA = {
-    "biased_k_shortest_path": "htopk_reuse",
-    "biased_k_shortest_path_latency": "htopk_reuseDelay",
-    "latency_biased_paths": "htopk_delay",
-    "exhaustive_optimal": "exhaustive",
+    "biased_k_shortest_path": "Reuse",
+    "biased_k_shortest_path_latency": "ReuseDelay",
+    "latency_biased_paths": "Delay",
+    "exhaustive_optimal": "Exhaustive",
 }
 
 NOME_TOPO = {"iaag": "IAAG", "er": "ER", "ba": "BA"}
@@ -149,17 +149,13 @@ def plot_accuratezza(dati: pd.DataFrame) -> None:
     """Barre impilate al 100%: quota di celle in cui ogni euristica coincide
     esattamente con l'ottimo, un gruppo di barre per topologia + il totale."""
     GRUPPI = [*TOPOLOGIE_ORDINATE, "tutte"]
-    ETICHETTE = {**NOME_TOPO, "tutte": "TUTTE"}
+    ETICHETTE = {**NOME_TOPO, "tutte": "ALL"}
 
     celle_per_gruppo = dati.groupby("topology")["cella_id"].nunique()
     pct_coincidenza = dati.groupby(["topology", "strategy"])["coincide"].mean() * 100
-    mai_migliore = int(dati.loc[dati["topology"] != "tutte", "migliore"].sum())
-    totale = int(celle_per_gruppo["tutte"])
 
     fig, ax = plt.subplots(figsize=(12.5, 6.6))
     fig.patch.set_facecolor("white")
-    fig.suptitle("Qualità rispetto all'ottima sul singolo repair, EPOCA = 0",
-                 fontsize=15, x=0.01, ha="left", fontweight="bold", color=INK)
     larghezza = 0.28
 
     for i, gruppo in enumerate(GRUPPI):
@@ -180,26 +176,20 @@ def plot_accuratezza(dati: pd.DataFrame) -> None:
             testo = "100%" if pct >= 99.95 else f"{pct:.0f}%"
             ax.text(x, pct - 12, testo, ha="center", va="top", fontsize=10.5,
                     fontweight="bold", color=_colore_testo(COLORI[strat]))
-        ax.text(x0, -6, f"{ETICHETTE[gruppo]}\n{celle_per_gruppo[gruppo]} celle",
+        ax.text(x0, -6, f"{ETICHETTE[gruppo]}\n{celle_per_gruppo[gruppo]} repairs",
                 ha="center", va="top", fontsize=11, color=INK)
 
     ax.set_ylim(0, 108)
     ax.set_xlim(-0.5, len(GRUPPI) - 0.3)
     ax.set_xticks([])
-    ax.set_ylabel("%(#RR, diff_simm, avg_latency) == ottimo", fontsize=11)
+    ax.set_ylabel("Share of repairs matching optimal (%)", fontsize=11)
     _pulisci_assi(ax, spine_visibili=("left",))
 
     legenda = [Patch(facecolor=COLORI[s], label=NOME_STRATEGIA[s]) for s in EURISTICHE]
     ax.legend(handles=legenda, frameon=False, fontsize=10, loc="upper center",
-              bbox_to_anchor=(0.5, 1.20), ncol=3)
+              bbox_to_anchor=(0.5, 1.08), ncol=3)
 
-    fig.text(0.01, 0.905,
-             "filtri sui dati: epoca = 0  ·  F_KO (esaustiva) > 0  ·  tutte e 4 le strategie presenti e completate con successo",
-             fontsize=9.5, color=INK_SOFT, style="italic")
-    fig.text(0.01, 0.87, f"migliore dell'ottimo: {mai_migliore} / {totale * len(EURISTICHE)}",
-             fontsize=10, color=INK_SOFT)
-
-    fig.tight_layout(rect=[0, 0.03, 1, 0.86])
+    fig.tight_layout(rect=[0, 0.03, 1, 0.95])
     _salva(fig, "accuratezza.png")
 
 
@@ -243,24 +233,28 @@ def plot_tempo_griglia(dati: pd.DataFrame) -> None:
 
             ax.set_yscale("linear")     # esplicito, come richiesto
             ax.set_xticks(NODI)      # altrimenti matplotlib sceglie tick decimali (22.5, 27.5, ...)
-            ax.set_title(f"{NOME_TOPO[topo]}  ·  Flows={num_flows}", fontsize=9.5, color=INK)
+            if riga == 0:
+                ax.set_title(NOME_TOPO[topo], fontsize=10.5, color=INK)
             _pulisci_assi(ax, alpha=0.2)
             if riga == len(NUM_FLOWS) - 1:
                 ax.set_xlabel("Infrastructure Size", fontsize=9)
             if colonna == 0:
-                ax.set_ylabel("Excecution Time [s]", fontsize=9)
+                ax.set_ylabel("Execution Time [s]", fontsize=9)
 
         # limite superiore uniforme per riga: 10^2 deve comparire come tick
         # in tutte le righe, non solo in quelle (flussi=5,6) dove i dati
         # arrivano naturalmente cosi' in alto
         assi[riga][0].set_ylim(top=100)
 
-    # legenda unica, fuori dalla griglia -- niente sovrapposizioni con i dati
-    # (coordinate entro [0, 1]: sopra 1.0 la figura le taglia via al salvataggio)
-    handles, labels = assi[0][0].get_legend_handles_labels()
-    fig.legend(handles, labels, frameon=False, fontsize=10, ncol=4, loc="upper center", bbox_to_anchor=(0.5, 0.965))
+        # legenda per riga, nel pannello IAAG (colonna 0): le curve restano
+        # piatte vicino allo zero per l'intera riga, quindi l'angolo in alto
+        # a sinistra e' sempre libero da dati -- il titolo della legenda fa
+        # anche da etichetta "Flows=N" per tutta la riga, scritta una sola volta
+        handles, labels = assi[riga][0].get_legend_handles_labels()
+        assi[riga][0].legend(handles, labels, title=f"Flows = {num_flows}", frameon=False,
+                              fontsize=8, title_fontsize=9, loc="upper left")
 
-    fig.tight_layout(rect=[0, 0, 1, 0.89])
+    fig.tight_layout()
     _salva(fig, "tempo_griglia_topologia_flussi.png")
 
 
@@ -327,7 +321,7 @@ ETICHETTA_ALGO = {
     "latency_biased_paths": "De",
 }
 COLORI_ALGO = {ETICHETTA_ALGO[s]: COLORI[s] for s in EURISTICHE}   # sigla tabella -> colore strategia (come accuratezza.png)
-NOME_ALGO = {"Ru": "htopk_reuse", "RuD": "htopk_reuseDelay", "De": "htopk_delay"}   # sigla -> nome completo (legenda)
+NOME_ALGO = {"Ru": "Reuse", "RuD": "ReuseDelay", "De": "Delay"}   # sigla -> nome completo (legenda)
 
 
 def tabella_divario(dati: pd.DataFrame, nome_file: str, out_dir: Path = OUT_DIR, dpi: int = 200) -> None:
@@ -451,6 +445,8 @@ def main() -> None:
     dati_generale = dati_divario.groupby(["strategy", "n", "num_flows"])[list(ETICHETTA_METRICA)].mean().reset_index()
     tabella_divario(dati_generale, "tabella_divario_generale.png")
     tabella_divario(dati_generale[(dati_generale["num_flows"] == 6) & (dati_generale["n"] == 40)], "tabella_divario_generale_f6_n40.png")
+
+    print(dftmp.describe())
 
 
 if __name__ == "__main__":

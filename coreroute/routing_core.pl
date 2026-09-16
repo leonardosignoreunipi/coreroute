@@ -5,98 +5,95 @@
 :- dynamic flow/5.
 :- dynamic routing/2.
 :- dynamic pathsCandidates/2.
-:- dynamic speedOfLight/1.
+:- dynamic propagationSpeed/1.
 :- dynamic pcktSize/2.
 :- set_prolog_flag(stack_limit, 12 000 000 000).
 
-node_qtime(Node, 0) :- host(Node, _).
-node_qtime(Node, QTime) :- router(Node, QTime).
+queuingDelay(Node, 0) :- host(Node, _).
+queuingDelay(Node, QTime) :- router(Node, QTime).
+
+all(Flows) :-
+    findall(routing(FId, PId), (flow(FId, _, _, _, _), routing(FId, PId)), Flows).
 
 partition(OkFlows, KoFlows) :-
-    findall(routing(FId, PId),( flow(FId, _, _, _, _), routing(FId, PId)), AllFlows),
-    partition(AllFlows, OkFlows, KoFlows).
+    all(Flows),
+    partition(Flows, OkFlows, KoFlows).
 
-partition(AllFlows, OkFlows, KoFlows) :-
-    findall(routing(FlowId, PathId), (routing(FlowId,PathId),validPath(FlowId, PathId, AllFlows)), OkFlows), 
-    subtract(AllFlows, OkFlows, KoFlows).
+partition(Flows, OkFlows, KoFlows) :-
+    findall(routing(FId, PId), (routing(FId, PId), validPath(FId, PId, Flows)), OkFlows),
+    subtract(Flows, OkFlows, KoFlows).
 
-crRouting([routing(FlowId, _)|Tail], OldRoutings, NewRoutings, Failed) :-
-    reRoute(FlowId, OldRoutings, NewValidPathId),
-    crRouting(Tail, [routing(FlowId, NewValidPathId)|OldRoutings], NewRoutings, Failed).
-crRouting([routing(FlowId, PathId)|Tail], OldRoutings, NewRoutings, [routing(FlowId, PathId)|Failed]) :-
-    crRouting(Tail, OldRoutings, NewRoutings, Failed).
-crRouting([], NewValidRoutings, NewValidRoutings, []).
+repair([routing(FlowId,_)|Rest], Fixed, NewR, F) :-
+    pathsCandidates(FlowId, Candidates),
+    member(PathId, Candidates),
+    validPath(FlowId, PathId, Fixed),
+    repair(Rest, [routing(FlowId, PathId)|Fixed], NewR, F).
+repair([Ko|Rest], Fixed, NewR, [Ko|F]) :-
+    repair(Rest, Fixed, NewR, F).
+repair([], Fixed, Fixed, []).
 
 exhaustiveRouting(Flows, OldRoutings, Solutions) :-
     findall(Perm, permutation(Flows, Perm), Perms),
     loop(Perms, OldRoutings, Solutions).
  
 loop([P|Perms],OldRoutings, [NewRoutings|Sols]) :-
-    crRouting(P, OldRoutings, NewRoutings, _),
+    repair(P, OldRoutings, NewRoutings, _),
     loop(Perms, OldRoutings, Sols).
 loop([], _, []).
 
-reRoute(FlowId, Routings, NextPathId) :-
-    nextCandidate(FlowId, NextPathId), 
-    validPath(FlowId, NextPathId, Routings).
-
-nextCandidate(FlowId, NextPathId) :-
-    pathsCandidates(FlowId, PathCandidates),
-    member(NextPathId, PathCandidates).
-
 validPath(FlowId, PathId, OkRoutings) :-
-    flow(FlowId, SrcService, DstService, MaxLatency, _),
+    flow(FlowId, SrcService, DstService, MaxDelay, _),
     path(PathId, SrcHost, DstHost, Nodes),
     Nodes = [SrcHost|_],last(Nodes, DstHost),
-    host(SrcHost, ServicesAtSrcHost), member(SrcService, ServicesAtSrcHost),
-    host(DstHost, ServicesAtDstHost), member(DstService, ServicesAtDstHost),
+    host(SrcHost, SrcServices), member(SrcService, SrcServices),
+    host(DstHost, DstServices), member(DstService, DstServices),
 
-    requiredBandwidth(FlowId, UsedBw), checkBandwidthPath(FlowId, Nodes, UsedBw, OkRoutings),
-    checkLatencyPath(FlowId, PathId, OkRoutings, Latency), MaxLatency >= Latency.
+    requiredBandwidth(FlowId, UsedBw), pathBandwithOk(FlowId, Nodes, UsedBw, OkRoutings),
+    pathDelayOk(FlowId, PathId, OkRoutings, Delay), MaxDelay >= Delay.
 
 requiredBandwidth(FlowId, UsedBw) :-
     pcktSize(FlowId, PcktSize),
     flow(FlowId, _, _, _, RateInHz),
     UsedBw is RateInHz * PcktSize.
 
-availableBandwidthLink(FlowId, Node1, Node2, OkRoutings, EffectiveBw) :-
-    s_link(Node1, Node2, TotalBw, _),
+availableBandwidthLink(FlowId, N1, N2, OkRoutings, EffectiveBw) :-
+    s_link(N1, N2, TotalBw, _),
     findall(Bw, 
                 (
                     member(routing(OtherFlowId, PathId), OkRoutings),
                     OtherFlowId \= FlowId,
-                    path_contains_link(PathId, Node1, Node2),
+                    path_contains_link(PathId, N1, N2),
                     requiredBandwidth(OtherFlowId, Bw)
                 ), 
             UsedBwList),
     sum_list(UsedBwList, UsedBw),
     EffectiveBw is TotalBw - UsedBw.
 
-checkBandwidthPath(FlowId, [Node1, Node2 | Rest], RequiredBandwidth, OkRoutings) :-
-    s_link(Node1, Node2, _, _),
-    availableBandwidthLink(FlowId, Node1, Node2, OkRoutings, EffectiveBw), EffectiveBw >= RequiredBandwidth,
-    checkBandwidthPath(FlowId, [Node2 | Rest], RequiredBandwidth, OkRoutings).
-checkBandwidthPath(_, [_], _, _).
+pathBandwithOk(FlowId, [N1, N2 | Rest], RequiredBandwidth, OkRoutings) :-
+    s_link(N1, N2, _, _),
+    availableBandwidthLink(FlowId, N1, N2, OkRoutings, EffectiveBw), EffectiveBw >= RequiredBandwidth,
+    pathBandwithOk(FlowId, [N2 | Rest], RequiredBandwidth, OkRoutings).
+pathBandwithOk(_, [_], _, _).
 
-checkLatencyPath(FlowId, PathId, OkRoutings, Latency) :-
+pathDelayOk(FlowId, PathId, OkRoutings, Delay) :-
     path(PathId, _, _, Nodes),
-    path_latency_nodes(FlowId, Nodes, OkRoutings, 0, Latency).
+    path_Delay_nodes(FlowId, Nodes, OkRoutings, 0, Delay).
 
-path_latency_nodes(FlowId, [Node1, Node2 | Rest], OkRoutings, OldDelay, NewDelay) :-
-    flow(FlowId, _, _, MaxLatency, _), 
-    availableBandwidthLink(FlowId, Node1, Node2, OkRoutings, EffectiveBw), EffectiveBw > 0,
-    hopLatency(FlowId, Node1, Node2, Delay), 
-    TmpDelay is OldDelay + Delay, TmpDelay =< MaxLatency,
-    path_latency_nodes(FlowId, [Node2 | Rest], OkRoutings, TmpDelay, NewDelay).
-path_latency_nodes(_, [_], _, Delay, Delay).
+path_Delay_nodes(FlowId, [N1, N2 | Rest], OkRoutings, OldDelay, NewDelay) :-
+    flow(FlowId, _, _, MaxDelay, _), 
+    availableBandwidthLink(FlowId, N1, N2, OkRoutings, EffectiveBw), EffectiveBw > 0,
+    hopDelay(FlowId, N1, N2, Delay), 
+    TmpDelay is OldDelay + Delay, TmpDelay =< MaxDelay,
+    path_Delay_nodes(FlowId, [N2 | Rest], OkRoutings, TmpDelay, NewDelay).
+path_Delay_nodes(_, [_], _, Delay, Delay).
 
-hopLatency(FlowId, Node1, Node2, Delay) :-
-    s_link(Node1, Node2, Bandwidth, Length),
-    node_qtime(Node1, QTime1), 
-    speedOfLight(SpeedOfLight), 
+hopDelay(FlowId, N1, N2, Delay) :-
+    s_link(N1, N2, Bandwidth, Length),
+    queuingDelay(N1, QTime1), 
+    propagationSpeed(V), 
     pcktSize(FlowId, PcktSize),
     Dtrasm is PcktSize / Bandwidth, 
-    Dprop is Length / SpeedOfLight, 
+    Dprop is Length / V, 
     Delay is QTime1 + Dtrasm + Dprop.
 
 % --- UTILS ---
@@ -109,7 +106,7 @@ s_path(PathId, DstHost, SrcHost, ReversedNodes) :-
     path(PathId, SrcHost, DstHost, Nodes),
     reverse(Nodes, ReversedNodes).
 
-path_contains_link(PathId, Node1, Node2) :-
+path_contains_link(PathId, N1, N2) :-
     atom(PathId),
     path(PathId, _, _, Nodes),
-    ( append(_, [Node1, Node2 | _], Nodes) ; append(_, [Node2, Node1 | _], Nodes) ).
+    ( append(_, [N1, N2 | _], Nodes) ; append(_, [N2, N1 | _], Nodes) ).

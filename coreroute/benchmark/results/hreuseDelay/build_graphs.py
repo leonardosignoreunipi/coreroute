@@ -41,9 +41,15 @@ import os
 import pandas as pd
 import seaborn as sns
 import matplotlib.pyplot as plt
+from matplotlib.lines import Line2D
 
 PLOT_DIR = "graphs"
 FILE_CSV = "benchmark_biased_k_shortest_path_latency.csv"
+
+TOPOLOGIE_ORDINATE = ["iaag", "er", "ba"]     # per numero di archi crescente, coerente con grafici.py
+N_CONFIRMATORIA = 1000                         # cella confirmatoria dichiarata in CLAUDE.md (n=1000, ff=1.0)
+EPOCHE_MOSTRATE = [0, 10, 19]           # checkpoint rappresentativi sulle 20 epoche totali
+METODO_COLORI = {"CR": "#0072B2", "From Scratch": "#D55E00"}   # stessa coppia blu/arancio del paper (Fig. 9/10)
 
 # Assicuriamoci che la cartella di destinazione esista
 os.makedirs(PLOT_DIR, exist_ok=True)
@@ -139,9 +145,10 @@ def get_symm_dist_failed(df):
     df_full["method"] = "From Scratch"
     
     df_combined = pd.concat([df_cr, df_full], ignore_index=True)
-    
-    df_combined = df_combined[df_combined["pct_mod"].isin([0.5]) & df_combined["flow_factor"].isin([1.0]) & df_combined["epoch"].isin([19])]
-    
+
+    df_combined = df_combined[df_combined["pct_mod"].isin([0.5]) & df_combined["flow_factor"].isin([1.0])
+                               & df_combined["n"].isin([N_CONFIRMATORIA]) & df_combined["epoch"].isin(EPOCHE_MOSTRATE)]
+
     return df_combined
 
 def get_ko_vs_changed_data(df):
@@ -153,28 +160,25 @@ def get_ko_vs_changed_data(df):
     metrics = ["pct_ko_CR", "pct_changed_CR", "pct_changed_FULL"]
     return df_tmp.groupby(group_cols)[metrics].mean().reset_index()
 
-def get_ko_time(df):
-    df_tmp = df.copy()
-    df_tmp["pct_flows_ko"] = 100 * (df_tmp["N_KO_CR"] / df_tmp["num_flows"])
-    
-    group = ["topology", "n", "flow_factor", "pct_mod"]
-    metrics = ["pct_flows_ko", "T_CR", "T_FULL"]
-        
-    
-    df_tmp = df_tmp.groupby(group)[metrics].mean().reset_index()
-    
-    
-    df_cr = df_tmp.copy()
-    df_cr = df_cr.rename(columns={"T_CR": "time"})
+def get_ko_time_raw(df):
+    """Frazione di flussi NON riparati (KO - RR - no_path, per strategia) e tempo di
+    riparazione, per seed/epoca, sulla cella confermativa (n=1000, ff=1.0, pct_mod=0.5).
+
+    A differenza di N_KO (identico per costruzione fra le due strategie -- proprieta'
+    dello stato pre-epoca condiviso, mai influenzato dalla strategia che lo riparera'),
+    questa quantita' e' specifica per strategia: isola i fallimenti "di ragionamento"
+    (candidati proposti, ma scartati tutti da Prolog per contesa di banda) dai fallimenti
+    strutturali (nessun candidato mai proposto, no_path_count -- Stage 1/topologico, non
+    imputabile alla strategia di riparazione)."""
+    sub = df[(df["n"] == N_CONFIRMATORIA) & (df["flow_factor"] == 1.0) & (df["pct_mod"] == 0.5)].copy()
+    sub["pct_failed_CR"] = 100 * (sub["N_KO_CR"] - sub["N_R_CR"] - sub["no_path_count_CR"]) / sub["num_flows"]
+    sub["pct_failed_FULL"] = 100 * (sub["N_KO_FULL"] - sub["N_R_FULL"] - sub["no_path_count_FULL"]) / sub["num_flows"]
+    cols = ["topology", "epoch"]
+    df_cr = sub[cols + ["pct_failed_CR", "T_CR"]].rename(columns={"pct_failed_CR": "pct_failed", "T_CR": "time"})
     df_cr["method"] = "CR"
-    
-    df_full = df_tmp.copy()
-    df_full = df_full.rename(columns={"T_FULL": "time"})
-    df_full["method"] = "FULL"
-    
-    df_combined = pd.concat([df_cr, df_full], ignore_index=True)
-    
-    return df_combined
+    df_full = sub[cols + ["pct_failed_FULL", "T_FULL"]].rename(columns={"pct_failed_FULL": "pct_failed", "T_FULL": "time"})
+    df_full["method"] = "From Scratch"
+    return pd.concat([df_cr, df_full], ignore_index=True)
 
 df = pd.read_csv(FILE_CSV)
 df = df[df["ok"]]
@@ -187,7 +191,7 @@ df_changed = get_flows_changed_data(df)
 df_changed_time = get_flows_vs_time_data(df_changed)
 df_symm_failed = get_symm_dist_failed(df)
 df_ko_changed = get_ko_vs_changed_data(df)
-df_ko_time = get_ko_time(df)
+df_ko_time = get_ko_time_raw(df)
 
 def time1():
     g = sns.relplot(
@@ -495,64 +499,69 @@ def flow_changed_time_denso():
         
             return pd.concat([df_cr, df_full], ignore_index=True)
     data = get_flows_vs_time_data_raw(df)
-    data = data[data["flow_factor"].isin([1.0]) & data["pct_mod"].isin([0.5]) & data["epoch"].isin([9])]
+    data = data[data["flow_factor"].isin([1.0]) & data["pct_mod"].isin([0.5])
+                & data["n"].isin([N_CONFIRMATORIA]) & data["epoch"].isin(EPOCHE_MOSTRATE)]
+
     g = sns.relplot(
-                data=data,
-                x="pct_flows_changed",
-                y="time",
-                hue="method",
-                row="n",
-                col="topology",
-                kind="scatter",
-                markers=True,
-                height=3,
-                palette="colorblind",
-                aspect=1.2
-            )
-            
+        data=data, x="pct_flows_changed", y="time", hue="method",
+        hue_order=list(METODO_COLORI), palette=METODO_COLORI,
+        row="topology", row_order=TOPOLOGIE_ORDINATE,
+        col="epoch", col_order=EPOCHE_MOSTRATE,
+        kind="scatter", height=3, aspect=1.2, legend=False,
+    )
     g.set_axis_labels("(%) path flow changed", "Time (s)")
+    g.set_titles("")
+    for ax in g.axes.flat:
+        ax.tick_params(labelbottom=True)   # asse condiviso, ma numeri ripetuti su ogni riga
+        ax.set_xlabel("(%) path flow changed")   # idem per l'etichetta testuale, non solo i numeri
+        ax.xaxis.label.set_visible(True)   # seaborn nasconde la label sulle righe interne, va riattivata
+
+    legend_handles = [Line2D([0], [0], marker="o", linestyle="", color=c, label=m)
+                       for m, c in METODO_COLORI.items()]
+    for topo in TOPOLOGIE_ORDINATE:
+        for epoch in EPOCHE_MOSTRATE:
+            ax = g.axes_dict[(topo, epoch)]
+            if epoch == EPOCHE_MOSTRATE[0]:
+                ax.set_ylabel(f"{topo.upper()}\nTime (s)")
+            if topo == TOPOLOGIE_ORDINATE[0]:
+                ax.set_title(f"Epoch {epoch}", fontsize=10)
+        ax0 = g.axes_dict[(topo, EPOCHE_MOSTRATE[0])]
+        ax0.legend(handles=legend_handles, title="ReuseDelay", loc="best",
+                   fontsize=8, title_fontsize=9, frameon=False)
+
+    g.tight_layout()   # ricalcola lo spazio tra le righe ora che ogni riga ha la sua xlabel
     g.savefig(os.path.join(PLOT_DIR, "flows_changed_time_denso.png"), dpi=300)
     
 def symm_dist_delay():
     g = sns.relplot(
-        data=df_symm_failed,
-        x="avg_latency",
-        y="diff_simm",
-        hue="method",
-        row="n",
-        col="topology",
-        kind="scatter",
-        markers=True,
-        height=3,
-        palette="colorblind",
-        aspect=1.2
+        data=df_symm_failed, x="avg_latency", y="diff_simm", hue="method",
+        hue_order=list(METODO_COLORI), palette=METODO_COLORI,
+        row="topology", row_order=TOPOLOGIE_ORDINATE,
+        col="epoch", col_order=EPOCHE_MOSTRATE,
+        kind="scatter", height=3, aspect=1.2, legend=False,
     )
-    
-    g.set_axis_labels(x_var="Path delay (ms)",y_var="Symm. distance")
-    
-    g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300) 
-    
-def symm_dist_delay_epoch():
-    
-    df_tmp = df_symm_failed.copy()
-   
-    g = sns.relplot(
-        data=df_symm_failed,
-        x="avg_latency",
-        y="diff_simm",
-        hue="method",
-        row="n",
-        col="topology",
-        kind="scatter",
-        markers=True,
-        height=3,
-        palette="colorblind",
-        aspect=1.2
-    )
-    
-    g.set_axis_labels(x_var="Path delay (ms)",y_var="Symm. distance")
-    
-    g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300)    
+    g.set_axis_labels("Path delay (ms)", "Symm. distance")
+    g.set_titles("")
+    for ax in g.axes.flat:
+        ax.tick_params(labelbottom=True)   # asse condiviso, ma numeri ripetuti su ogni riga
+        ax.set_xlabel("Path delay (ms)")   # idem per l'etichetta testuale, non solo i numeri
+        ax.xaxis.label.set_visible(True)   # seaborn nasconde la label sulle righe interne, va riattivata
+
+    legend_handles = [Line2D([0], [0], marker="o", linestyle="", color=c, label=m)
+                       for m, c in METODO_COLORI.items()]
+    for topo in TOPOLOGIE_ORDINATE:
+        for epoch in EPOCHE_MOSTRATE:
+            ax = g.axes_dict[(topo, epoch)]
+            if epoch == EPOCHE_MOSTRATE[0]:
+                ax.set_ylabel(f"{topo.upper()}\nSymm. distance")
+            if topo == TOPOLOGIE_ORDINATE[0]:
+                ax.set_title(f"Epoch {epoch}", fontsize=10)
+        ax0 = g.axes_dict[(topo, EPOCHE_MOSTRATE[0])]
+        ax0.legend(handles=legend_handles, title="ReuseDelay", loc="best",
+                   fontsize=8, title_fontsize=9, frameon=False)
+
+    g.tight_layout()   # ricalcola lo spazio tra le righe ora che ogni riga ha la sua xlabel
+    g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300)
 
 def ko_vs_changed():
     df_melted = df_ko_changed.melt(
@@ -593,7 +602,6 @@ def heatmap_speedup():
     Genera una griglia di heatmap per lo Speedup (T_FULL / T_CR)
     con righe = pct_mod e colonne = topology.
     """
-    topologies = sorted(df["topology"].unique())
     pct_mods = sorted(df["pct_mod"].unique())
 
     # Scala di colori globale per lo Speedup
@@ -601,7 +609,7 @@ def heatmap_speedup():
     vmax = df["Speedup"].max()
 
     nrows = len(pct_mods)
-    ncols = len(topologies)
+    ncols = len(TOPOLOGIE_ORDINATE)
 
     fig, axes = plt.subplots(
         nrows=nrows,
@@ -611,12 +619,12 @@ def heatmap_speedup():
     )
 
     for row_idx, pct in enumerate(pct_mods):
-        for col_idx, topo in enumerate(topologies):
+        for col_idx, topo in enumerate(TOPOLOGIE_ORDINATE):
             ax = axes[row_idx, col_idx]
-            
+
             # Filtra per la specifica topologia e pct_mod
             sub_df = df[(df["topology"] == topo) & (df["pct_mod"] == pct)]
-            
+
             # Calcola la matrice pivot dello Speedup
             piv_speedup = sub_df.groupby(["flow_factor", "n"])["Speedup"].mean().unstack()
 
@@ -637,45 +645,83 @@ def heatmap_speedup():
                 cbar_kws={"label": "Speedup"} if is_last_col else None,
             )
 
-            # Titolo del singolo grafico
-            ax.set_title(f"{topo.upper()} | Perturbation: {pct}", fontsize=11)
-            
-            # Mostra label 'Nodes' solo nell'ultima riga in basso
-            ax.set_xlabel("Nodes" if row_idx == nrows - 1 else "")
-            
-            # Mostra label 'Flow factor' solo nella prima colonna a sinistra
-            ax.set_ylabel(f"Flow factor" if col_idx == 0 else "")
-            
+            # Nome topologia ripetuto su ogni riga: qualunque riga (livello di
+            # perturbazione) venga estratta da sola per la tesi deve restare
+            # leggibile con le sue 3 topologie gia' etichettate sopra
+            ax.set_title(topo.upper(), fontsize=11)
+
+            # 'Nodes' su ogni riga: i tick numerici sono gia' indipendenti per riga
+            # (plt.subplots senza sharex), qui serve solo ripetere la scritta
+            ax.set_xlabel("Nodes")
+
+            # "Perturbation=X%" una sola volta per riga, unito all'ylabel di colonna 0
+            ax.set_ylabel(f"Perturbation = {pct:.0%}\nFlow factor" if col_idx == 0 else "")
+
             ax.invert_yaxis()
 
-    fig.suptitle("Speedup Heatmap Grid", fontsize=14, y=0.99)
-    fig.tight_layout(rect=[0, 0, 1, 0.98])
-    
+    fig.tight_layout()
+
     # Salvataggio
     fig.savefig(os.path.join(PLOT_DIR, "heatmap_speedup_grid.png"), dpi=300)
     plt.close(fig)
 
-def ko_time():
-    df_tmp = get_ko_time(df)
-    
+def ko_time_scatter():
+    data = get_ko_time_raw(df)
+    data = data[data["epoch"].isin(EPOCHE_MOSTRATE)]   # meno epoche = meno punti, piu' leggibile
+
     g = sns.relplot(
-        data=df_tmp, 
-        x="pct_flows_ko", 
-        y="time", 
-        hue="method",
-        col="topology", 
-        row="flow_factor", 
-        kind="line", 
-        markers=True,
-        height=3, 
-        palette="colorblind", 
-        aspect=1.2
+        data=data, x="pct_failed", y="time", hue="method",
+        hue_order=list(METODO_COLORI), palette=METODO_COLORI,
+        row="topology", row_order=TOPOLOGIE_ORDINATE,
+        col="epoch", col_order=EPOCHE_MOSTRATE,
+        kind="scatter", height=3, aspect=1.2, legend=False,
     )
-    
-    g.set_axis_labels("(%) Flows ko","Time (s)")
-    g.savefig("ko_time.png", dpi=300)
-    
-    
+    g.set_axis_labels("(%) Flows Failed", "Time (s)")
+    g.set_titles("")
+    for ax in g.axes.flat:
+        ax.tick_params(labelbottom=True)   # asse condiviso, ma numeri ripetuti su ogni riga
+        ax.set_xlabel("(%) Flows Failed")       # idem per l'etichetta testuale, non solo i numeri
+        ax.xaxis.label.set_visible(True)    # seaborn nasconde la label sulle righe interne, va riattivata
+
+    legend_handles = [Line2D([0], [0], marker="o", linestyle="", color=c, label=m)
+                       for m, c in METODO_COLORI.items()]
+    for topo in TOPOLOGIE_ORDINATE:
+        for epoch in EPOCHE_MOSTRATE:
+            ax = g.axes_dict[(topo, epoch)]
+            if epoch == EPOCHE_MOSTRATE[0]:
+                ax.set_ylabel(f"{topo.upper()}\nTime (s)")
+            if topo == TOPOLOGIE_ORDINATE[0]:
+                ax.set_title(f"Epoch {epoch}", fontsize=10)
+        ax0 = g.axes_dict[(topo, EPOCHE_MOSTRATE[0])]
+        ax0.legend(handles=legend_handles, title="ReuseDelay", loc="best",
+                   fontsize=8, title_fontsize=9, frameon=False)
+
+    g.tight_layout()   # ricalcola lo spazio tra le righe ora che ogni riga ha la sua xlabel
+    g.savefig(os.path.join(PLOT_DIR, "ko_time_scatter.png"), dpi=300)
+
+
+def ko_time_linear():
+    raw = get_ko_time_raw(df)
+    data = raw.groupby(["topology", "method", "epoch"])[["pct_failed", "time"]].mean().reset_index()
+
+    g = sns.relplot(
+        data=data, x="pct_failed", y="time", hue="method",
+        hue_order=list(METODO_COLORI), palette=METODO_COLORI,
+        col="topology", col_order=TOPOLOGIE_ORDINATE,
+        kind="line", sort=False,   # collega i punti in ordine di epoca, non di x
+        markers=True, height=3.5, aspect=1.2, legend=False,
+        facet_kws={"sharex": False, "sharey": False},
+    )
+    g.set_axis_labels("(%) Flows Failed", "Time (s)")
+    for topo in TOPOLOGIE_ORDINATE:
+        g.axes_dict[topo].set_title(topo.upper(), fontsize=11)
+
+    legend_handles = [Line2D([0], [0], color=c, marker="o", label=m) for m, c in METODO_COLORI.items()]
+    g.axes_dict[TOPOLOGIE_ORDINATE[0]].legend(handles=legend_handles, title="ReuseDelay",
+                                                frameon=False, fontsize=8, title_fontsize=9, loc="best")
+    g.savefig(os.path.join(PLOT_DIR, "ko_time_linear.png"), dpi=300)
+
+
 
 def main():
     sns.set_theme(style="darkgrid")

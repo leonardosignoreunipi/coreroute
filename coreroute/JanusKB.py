@@ -33,7 +33,7 @@ class JanusKB:
         Remove all dynamic facts from the Prolog runtime.
         Must be called between trials that share the same OS process (e.g. Ray workers).
         """
-        facts = ["host(_,_)", "router(_,_)", "link(_,_,_,_)", "path(_,_,_,_)", "flow(_,_,_,_,_)", "routing(_,_)", "pathsCandidates(_,_)", "speedOfLight(_)", "pcktSize(_,_)"]
+        facts = ["host(_,_)", "router(_,_)", "link(_,_,_,_)", "path(_,_,_,_)", "flow(_,_,_,_,_)", "routing(_,_)", "pathsCandidates(_,_)", "propagationSpeed(_)", "pcktSize(_,_)"]
         try:
             for f in facts:
                 j.query_once(f"retractall({f})")
@@ -50,7 +50,7 @@ class JanusKB:
             j.consult(self.prolog_kb_path)
         
             j.query_once("assertz(pcktSize(_,PcktSize))", {"PcktSize": self.config.pckt_size})#TODO sto ignorando la possibilità di avere un packsize per flusso
-            j.query_once("assertz(speedOfLight(SpeedOfLight))", {"SpeedOfLight": self.config.speed_of_light})
+            j.query_once("assertz(propagationSpeed(SpeedOfLight))", {"SpeedOfLight": self.config.speed_of_light})
         
             for h in self.config.hosts:
                 j.query_once("assertz(host(HostId, Services))", {"HostId": str(h.id), "Services": h.services})
@@ -134,9 +134,9 @@ class JanusKB:
             logger.error(f"Error during partitioning: {e}")
             raise JanusKBError(f"Error during partitioning: {e}")
     
-    def query_cr_routings(self, koflows: List[Routing], okflows: List[Routing]) -> tuple[List[Routing], List[Routing]]:
+    def query_repair(self, koflows: List[Routing], okflows: List[Routing]) -> tuple[List[Routing], List[Routing]]:
         """
-        Run the Prolog crRouting over the given ko/ok routings and return
+        Run the Prolog repair over the given ko/ok routings and return
         (new_valid_routings, failed_routings) as Routing lists.
         Raises JanusKBError on failure.
         """
@@ -147,7 +147,7 @@ class JanusKB:
         ok_list = f"[{', '.join(ok_terms)}]"
 
         query = f"""
-            crRouting({ko_list}, {ok_list}, _NewValidRoutingsTemp, _FailedTemp),
+            repair({ko_list}, {ok_list}, _NewValidRoutingsTemp, _FailedTemp),
             findall(_{{flowId: _F, pathId: _P}}, member(routing(_F, _P), _NewValidRoutingsTemp), NewValidRoutings),
             findall(_{{flowId: _F, pathId: _P}}, member(routing(_F, _P), _FailedTemp), FailedRoutings).
         """

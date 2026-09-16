@@ -36,7 +36,7 @@ class RoutingEngine:
         self.config = config
         self._pr = pr()
         self.STRATEGY = self.biased_k_shortest_path_latency
-        self.prolog_strategy = self.resolve_cr_routing
+        self.prolog_strategy = self.resolve_repair
         self.last_time_strategy = 0.0
         self.last_time_prolog_strategy = 0.0
         
@@ -177,7 +177,7 @@ class RoutingEngine:
         Continuous-reasoning routing: reallocate the ko-flows.
 
         Runs Stage 1, then resolves Stage 2 via self.prolog_strategy
-        (default: resolve_cr_routing; swappable to resolve_exhaustive_routing,
+        (default: resolve_repair; swappable to resolve_exhaustive_routing,
         same return shape either way -- no branching, like self.STRATEGY).
 
         Args:
@@ -200,13 +200,13 @@ class RoutingEngine:
 
         t0 = time.perf_counter()
         new_valid, failed = self.prolog_strategy(ko_flows, ok_flows)
-        self.last_time_prolog_strategy = time.perf_counter() - t0 #save time execution of the rerouting strategy (crRouting or exhaustiveRouting)
+        self.last_time_prolog_strategy = time.perf_counter() - t0 #save time execution of the rerouting strategy (repair or exhaustiveRouting)
         
         return new_valid, failed, no_path_count
 
-    def resolve_cr_routing(self, ko_flows: list[Routing], ok_flows: list[Routing]):
-        """Default prolog_strategy: resolve via crRouting/4."""
-        return self.kb.query_cr_routings(ko_flows, ok_flows)
+    def resolve_repair(self, ko_flows: list[Routing], ok_flows: list[Routing]):
+        """Default prolog_strategy: resolve via repair/4."""
+        return self.kb.query_repair(ko_flows, ok_flows)
 
     def resolve_exhaustive_routing(self, ko_flows: list[Routing], ok_flows: list[Routing]):
         """Alternate prolog_strategy: exhaustiveRouting/3, then pick the best solution."""
@@ -220,7 +220,7 @@ class RoutingEngine:
         (failed flows score as full removal cost, diff_score(old, []));
         3. lowest average latency among routed flows.
         Returns (new_valid_routings, failed_routings), same shape as
-        resolve_cr_routing.
+        resolve_repair.
         """
         if not solutions:
             raise RoutingEngineError("select_best_exhaustive_solution: no solutions to choose from")
@@ -405,7 +405,7 @@ class RoutingEngine:
         """
         Baseline the heuristics are measured against: enumerates ALL simple paths
         src->dst within cutoff = diameter*2 hops (main component if disconnected),
-        sorted by (diff_score, path_latency) so crRouting commits the best one.
+        sorted by (diff_score, path_latency) so repair commits the best one.
         The optimum is therefore exact but only WITHIN that hop budget and per
         flow, never global.
         """

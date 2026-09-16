@@ -96,9 +96,9 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
     kb.clear_kb()
     kb.initialize_kb()
 
-    # INIT with the fixed strategy/crRouting
+    # INIT with the fixed strategy/repair
     engine.STRATEGY = getattr(engine, INIT_STRATEGY)
-    engine.prolog_strategy = engine.resolve_cr_routing
+    engine.prolog_strategy = engine.resolve_repair
     t_init, (nvr, f_ko, f_rr, f_no_path) = _timed(ctrl.full_recompute)
     
     if f_rr < num_flows:
@@ -113,7 +113,7 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
         engine.prolog_strategy = engine.resolve_exhaustive_routing
     else:
         engine.STRATEGY = getattr(engine, strategy)
-        engine.prolog_strategy = engine.resolve_cr_routing
+        engine.prolog_strategy = engine.resolve_repair
 
     
     return network, kb, engine, ctrl
