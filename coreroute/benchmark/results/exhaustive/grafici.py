@@ -1,6 +1,7 @@
 from pathlib import Path
 
 import pandas as pd
+import seaborn as sns
 
 import matplotlib
 matplotlib.use("Agg")            # salva su file, non apre finestre
@@ -150,43 +151,31 @@ def plot_accuratezza(dati: pd.DataFrame) -> None:
     esattamente con l'ottimo, un gruppo di barre per topologia + il totale."""
     GRUPPI = [*TOPOLOGIE_ORDINATE, "tutte"]
     ETICHETTE = {**NOME_TOPO, "tutte": "ALL"}
-
-    celle_per_gruppo = dati.groupby("topology")["cella_id"].nunique()
-    pct_coincidenza = dati.groupby(["topology", "strategy"])["coincide"].mean() * 100
+    dati = dati.assign(pct=dati["coincide"] * 100)
 
     fig, ax = plt.subplots(figsize=(12.5, 6.6))
     fig.patch.set_facecolor("white")
-    larghezza = 0.28
+    sns.barplot(data=dati, x="topology", y="pct", hue="strategy", order=GRUPPI,
+                hue_order=EURISTICHE, palette=COLORI, errorbar=("ci", 95),
+                capsize=0.1, err_kws=dict(color=INK, linewidth=1.2), legend=False, ax=ax)
 
-    for i, gruppo in enumerate(GRUPPI):
-        x0 = i + (0.3 if gruppo == "tutte" else 0)   # il totale un po' staccato dal resto
-        n = celle_per_gruppo[gruppo]
-        for j, strat in enumerate(EURISTICHE):
-            pct = pct_coincidenza.get((gruppo, strat), 0.0)
-            p = pct / 100
-            z = 1.96   # Wilson score interval, 95%
-            denom = 1 + z**2 / n
-            centro = (p + z**2 / (2 * n)) / denom
-            margine = (z / denom) * (p * (1 - p) / n + z**2 / (4 * n**2)) ** 0.5
-            err_basso = 100 * (p - max(centro - margine, 0.0))
-            err_alto = 100 * (min(centro + margine, 1.0) - p)
-            x = x0 + (j - 1) * larghezza
-            ax.bar(x, pct, width=larghezza * 0.9, color=COLORI[strat],
-                   yerr=[[err_basso], [err_alto]], capsize=4, ecolor=INK, error_kw=dict(elinewidth=1.2))
-            testo = "100%" if pct >= 99.95 else f"{pct:.0f}%"
-            ax.text(x, pct - 12, testo, ha="center", va="top", fontsize=10.5,
-                    fontweight="bold", color=_colore_testo(COLORI[strat]))
-        ax.text(x0, -6, f"{ETICHETTE[gruppo]}\n{celle_per_gruppo[gruppo]} repairs",
-                ha="center", va="top", fontsize=11, color=INK)
+    for cont, strat in zip(ax.containers, EURISTICHE):
+        etichette = ["100%" if v.get_height() >= 99.95 else f"{v.get_height():.0f}%" for v in cont]
+        ax.bar_label(cont, labels=etichette, padding=-36, fontsize=16,
+                     fontweight="bold", color=_colore_testo(COLORI[strat]))
+
+    for x, gruppo in zip(ax.get_xticks(), GRUPPI):
+        ax.text(x, -6, ETICHETTE[gruppo], ha="center", va="top", fontsize=16, color=INK)
 
     ax.set_ylim(0, 108)
-    ax.set_xlim(-0.5, len(GRUPPI) - 0.3)
     ax.set_xticks([])
-    ax.set_ylabel("Share of repairs matching optimal (%)", fontsize=11)
+    ax.set_xlabel("")   # sns imposta "topology" come xlabel di default, la copriamo con le etichette sotto
+    ax.set_ylabel("Share of repairs matching optimal (%)", fontsize=16)
+    ax.tick_params(axis="y", labelsize=16)
     _pulisci_assi(ax, spine_visibili=("left",))
 
     legenda = [Patch(facecolor=COLORI[s], label=NOME_STRATEGIA[s]) for s in EURISTICHE]
-    ax.legend(handles=legenda, frameon=False, fontsize=10, loc="upper center",
+    ax.legend(handles=legenda, frameon=False, fontsize=16, loc="upper center",
               bbox_to_anchor=(0.5, 1.08), ncol=3)
 
     fig.tight_layout(rect=[0, 0.03, 1, 0.95])
@@ -233,13 +222,13 @@ def plot_tempo_griglia(dati: pd.DataFrame) -> None:
 
             ax.set_yscale("linear")     # esplicito, come richiesto
             ax.set_xticks(NODI)      # altrimenti matplotlib sceglie tick decimali (22.5, 27.5, ...)
-            if riga == 0:
-                ax.set_title(NOME_TOPO[topo], fontsize=10.5, color=INK)
+            ax.set_title(NOME_TOPO[topo], fontsize=16, color=INK)   # ripetuto su ogni riga: una riga ritagliata da sola resta etichettata
             _pulisci_assi(ax, alpha=0.2)
-            if riga == len(NUM_FLOWS) - 1:
-                ax.set_xlabel("Infrastructure Size", fontsize=9)
+            ax.tick_params(axis="both", labelsize=16)
+            if riga == len(NUM_FLOWS) - 1 and colonna == len(TOPOLOGIE_ORDINATE) // 2:
+                ax.set_xlabel("Infrastructure Size", fontsize=16)
             if colonna == 0:
-                ax.set_ylabel("Execution Time [s]", fontsize=9)
+                ax.set_ylabel("Execution Time [s]", fontsize=16)
 
         # limite superiore uniforme per riga: 10^2 deve comparire come tick
         # in tutte le righe, non solo in quelle (flussi=5,6) dove i dati
@@ -248,11 +237,9 @@ def plot_tempo_griglia(dati: pd.DataFrame) -> None:
 
         # legenda per riga, nel pannello IAAG (colonna 0): le curve restano
         # piatte vicino allo zero per l'intera riga, quindi l'angolo in alto
-        # a sinistra e' sempre libero da dati -- il titolo della legenda fa
-        # anche da etichetta "Flows=N" per tutta la riga, scritta una sola volta
+        # a sinistra e' sempre libero da dati
         handles, labels = assi[riga][0].get_legend_handles_labels()
-        assi[riga][0].legend(handles, labels, title=f"Flows = {num_flows}", frameon=False,
-                              fontsize=8, title_fontsize=9, loc="upper left")
+        assi[riga][0].legend(handles, labels, frameon=False, fontsize=16, loc="upper left")
 
     fig.tight_layout()
     _salva(fig, "tempo_griglia_topologia_flussi.png")
@@ -438,15 +425,9 @@ def main() -> None:
     for topo in TOPOLOGIE_ORDINATE:
         tabella_divario(dati_divario[dati_divario["topology"] == topo], f"tabella_divario_{topo}.png")
         plot_tempo_griglia(prepara_dati_tempo_griglia(df))
-
-    # generale: media delle % gia' calcolate per topologia (ognuna rispetto al
-    # proprio ottimo), non una media dei valori grezzi -- topologie diverse
-    # hanno scale di costo/latenza diverse, mediarle prima falserebbe il confronto
     dati_generale = dati_divario.groupby(["strategy", "n", "num_flows"])[list(ETICHETTA_METRICA)].mean().reset_index()
     tabella_divario(dati_generale, "tabella_divario_generale.png")
     tabella_divario(dati_generale[(dati_generale["num_flows"] == 6) & (dati_generale["n"] == 40)], "tabella_divario_generale_f6_n40.png")
-
-    print(dftmp.describe())
 
 
 if __name__ == "__main__":

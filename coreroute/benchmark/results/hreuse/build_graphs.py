@@ -525,10 +525,16 @@ def symm_dist_delay():
         palette="colorblind",
         aspect=1.2
     )
-    
-    g.set_axis_labels(x_var="Path delay (ms)",y_var="Symm. distance")
-    
-    g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300)    
+
+    g.set_axis_labels(x_var="Path delay (ms)", y_var="Symm. distance", size=13)
+    g.set_titles(size=13)
+    for ax in g.axes.flat:
+        ax.tick_params(axis="both", labelsize=12)
+
+    sns.move_legend(g, loc="center left", bbox_to_anchor=(-0.1, 0.5), fontsize=13)
+    g.figure.subplots_adjust(left=0.1)
+
+    g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300, bbox_inches="tight")
 
 def ko_vs_changed():
     df_melted = df_ko_changed.melt(
@@ -596,9 +602,6 @@ def heatmap_speedup():
             # Calcola la matrice pivot dello Speedup
             piv_speedup = sub_df.groupby(["flow_factor", "n"])["Speedup"].mean().unstack()
 
-            # Mostra la barra laterale dei colori solo sull'ultima colonna a destra
-            is_last_col = (col_idx == ncols - 1)
-
             sns.heatmap(
                 piv_speedup,
                 ax=ax,
@@ -607,24 +610,27 @@ def heatmap_speedup():
                 cmap="Blues",
                 annot=True,
                 fmt=".1f",       # 1 cifra decimale (es. 25.9)
-                cbar=is_last_col,
+                annot_kws={"fontsize": 16},
+                cbar=False,
                 linewidths=0.5,
                 linecolor="white",
-                cbar_kws={"label": "Speedup"} if is_last_col else None,
             )
 
+            # tick numerici (n / flow_factor) di questo subplot
+            ax.tick_params(axis="both", labelsize=12)
+
             # Titolo del singolo grafico
-            ax.set_title(f"{topo.upper()} | Perturbation: {pct}", fontsize=11)
-            
+            ax.set_title(f"{topo.upper()} | Perturbation: {pct}", fontsize=14)
+
             # Mostra label 'Nodes' solo nell'ultima riga in basso
-            ax.set_xlabel("Nodes" if row_idx == nrows - 1 else "")
-            
+            ax.set_xlabel("Nodes" if row_idx == nrows - 1 else "", fontsize=13)
+
             # Mostra label 'Flow factor' solo nella prima colonna a sinistra
-            ax.set_ylabel(f"Flow factor" if col_idx == 0 else "")
-            
+            ax.set_ylabel(f"Flow factor" if col_idx == 0 else "", fontsize=13)
+
             ax.invert_yaxis()
 
-    fig.suptitle("Speedup Heatmap Grid", fontsize=14, y=0.99)
+    fig.suptitle("Speedup Heatmap Grid", fontsize=18, y=0.99)
     fig.tight_layout(rect=[0, 0, 1, 0.98])
     
     # Salvataggio

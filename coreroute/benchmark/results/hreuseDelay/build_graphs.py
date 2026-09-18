@@ -513,7 +513,7 @@ def flow_changed_time_denso():
     g.set_titles("")
     for ax in g.axes.flat:
         ax.tick_params(labelbottom=True)   # asse condiviso, ma numeri ripetuti su ogni riga
-        ax.set_xlabel("(%) path flow changed")   # idem per l'etichetta testuale, non solo i numeri
+        ax.set_xlabel("")   # svuota il testo di seaborn: va reimpostato una sola volta per riga sotto
         ax.xaxis.label.set_visible(True)   # seaborn nasconde la label sulle righe interne, va riattivata
 
     legend_handles = [Line2D([0], [0], marker="o", linestyle="", color=c, label=m)
@@ -525,6 +525,8 @@ def flow_changed_time_denso():
                 ax.set_ylabel(f"{topo.upper()}\nTime (s)")
             if topo == TOPOLOGIE_ORDINATE[0]:
                 ax.set_title(f"Epoch {epoch}", fontsize=10)
+            if epoch == EPOCHE_MOSTRATE[len(EPOCHE_MOSTRATE) // 2]:
+                ax.set_xlabel("(%) path flow changed")   # una sola volta per riga, colonna centrale
         ax0 = g.axes_dict[(topo, EPOCHE_MOSTRATE[0])]
         ax0.legend(handles=legend_handles, title="ReuseDelay", loc="best",
                    fontsize=8, title_fontsize=9, frameon=False)
@@ -540,11 +542,11 @@ def symm_dist_delay():
         col="epoch", col_order=EPOCHE_MOSTRATE,
         kind="scatter", height=3, aspect=1.2, legend=False,
     )
-    g.set_axis_labels("Path delay (ms)", "Symm. distance")
+    g.set_axis_labels("Path delay (ms)", "Symm. distance", fontsize=13)
     g.set_titles("")
     for ax in g.axes.flat:
         ax.tick_params(labelbottom=True)   # asse condiviso, ma numeri ripetuti su ogni riga
-        ax.set_xlabel("Path delay (ms)")   # idem per l'etichetta testuale, non solo i numeri
+        ax.set_xlabel("")   # svuota il testo di seaborn: va reimpostato una sola volta per riga sotto
         ax.xaxis.label.set_visible(True)   # seaborn nasconde la label sulle righe interne, va riattivata
 
     legend_handles = [Line2D([0], [0], marker="o", linestyle="", color=c, label=m)
@@ -553,12 +555,14 @@ def symm_dist_delay():
         for epoch in EPOCHE_MOSTRATE:
             ax = g.axes_dict[(topo, epoch)]
             if epoch == EPOCHE_MOSTRATE[0]:
-                ax.set_ylabel(f"{topo.upper()}\nSymm. distance")
+                ax.set_ylabel(f"{topo.upper()}\nSymm. distance", fontsize=13)
             if topo == TOPOLOGIE_ORDINATE[0]:
-                ax.set_title(f"Epoch {epoch}", fontsize=10)
+                ax.set_title(f"Epoch {epoch}", fontsize=13)
+            if epoch == EPOCHE_MOSTRATE[len(EPOCHE_MOSTRATE) // 2]:
+                ax.set_xlabel("Path delay (ms)", fontsize=13)   # una sola volta per riga, colonna centrale
         ax0 = g.axes_dict[(topo, EPOCHE_MOSTRATE[0])]
-        ax0.legend(handles=legend_handles, title="ReuseDelay", loc="best",
-                   fontsize=8, title_fontsize=9, frameon=False)
+        ax0.legend(handles=legend_handles, loc="best",
+                   fontsize=11, frameon=False)
 
     g.tight_layout()   # ricalcola lo spazio tra le righe ora che ogni riga ha la sua xlabel
     g.savefig(os.path.join(PLOT_DIR, "symm_dist_delay.png"), dpi=300)
@@ -628,9 +632,6 @@ def heatmap_speedup():
             # Calcola la matrice pivot dello Speedup
             piv_speedup = sub_df.groupby(["flow_factor", "n"])["Speedup"].mean().unstack()
 
-            # Mostra la barra laterale dei colori solo sull'ultima colonna a destra
-            is_last_col = (col_idx == ncols - 1)
-
             sns.heatmap(
                 piv_speedup,
                 ax=ax,
@@ -639,23 +640,28 @@ def heatmap_speedup():
                 cmap="Blues",
                 annot=True,
                 fmt=".1f",       # 1 cifra decimale (es. 25.9)
-                cbar=is_last_col,
+                annot_kws={"fontsize": 16},
+                cbar=False,
                 linewidths=0.5,
                 linecolor="white",
-                cbar_kws={"label": "Speedup"} if is_last_col else None,
             )
+
+            # tick numerici (n / flow_factor) di questo subplot
+            ax.tick_params(axis="both", labelsize=12)
 
             # Nome topologia ripetuto su ogni riga: qualunque riga (livello di
             # perturbazione) venga estratta da sola per la tesi deve restare
             # leggibile con le sue 3 topologie gia' etichettate sopra
-            ax.set_title(topo.upper(), fontsize=11)
+            ax.set_title(topo.upper(), fontsize=14)
 
-            # 'Nodes' su ogni riga: i tick numerici sono gia' indipendenti per riga
-            # (plt.subplots senza sharex), qui serve solo ripetere la scritta
-            ax.set_xlabel("Nodes")
+            # 'Nodes' una sola volta per riga (colonna centrale): i tick numerici
+            # restano indipendenti per riga (plt.subplots senza sharex). Sulle altre
+            # colonne va svuotata esplicitamente, altrimenti resta il nome di default
+            # che seaborn eredita dall'indice del DataFrame pivotato ("n").
+            ax.set_xlabel("Nodes" if col_idx == len(TOPOLOGIE_ORDINATE) // 2 else "", fontsize=13)
 
             # "Perturbation=X%" una sola volta per riga, unito all'ylabel di colonna 0
-            ax.set_ylabel(f"Perturbation = {pct:.0%}\nFlow factor" if col_idx == 0 else "")
+            ax.set_ylabel(f"Perturbation = {pct:.0%}\nFlow factor" if col_idx == 0 else "", fontsize=13)
 
             ax.invert_yaxis()
 
@@ -680,7 +686,7 @@ def ko_time_scatter():
     g.set_titles("")
     for ax in g.axes.flat:
         ax.tick_params(labelbottom=True)   # asse condiviso, ma numeri ripetuti su ogni riga
-        ax.set_xlabel("(%) Flows Failed")       # idem per l'etichetta testuale, non solo i numeri
+        ax.set_xlabel("")   # svuota il testo di seaborn: va reimpostato una sola volta per riga sotto
         ax.xaxis.label.set_visible(True)    # seaborn nasconde la label sulle righe interne, va riattivata
 
     legend_handles = [Line2D([0], [0], marker="o", linestyle="", color=c, label=m)
@@ -692,6 +698,8 @@ def ko_time_scatter():
                 ax.set_ylabel(f"{topo.upper()}\nTime (s)")
             if topo == TOPOLOGIE_ORDINATE[0]:
                 ax.set_title(f"Epoch {epoch}", fontsize=10)
+            if epoch == EPOCHE_MOSTRATE[len(EPOCHE_MOSTRATE) // 2]:
+                ax.set_xlabel("(%) Flows Failed")   # una sola volta per riga, colonna centrale
         ax0 = g.axes_dict[(topo, EPOCHE_MOSTRATE[0])]
         ax0.legend(handles=legend_handles, title="ReuseDelay", loc="best",
                    fontsize=8, title_fontsize=9, frameon=False)
