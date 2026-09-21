@@ -11,6 +11,10 @@ import time
 
 logger = logging.getLogger(__name__)
 
+class EpochTimeout(Exception):
+    """Raised when the deadline of one re_routing call expires."""
+    pass
+
 class RoutingEngineError(Exception):
     """Custom exception for RoutingEngine-related errors."""
     pass 
@@ -39,6 +43,8 @@ class RoutingEngine:
         self.prolog_strategy = self.resolve_repair
         self.last_time_strategy = 0.0
         self.last_time_prolog_strategy = 0.0
+        self.epoch_timeout = None  # seconds allowed to one re_routing call (None = no limit)
+        self._deadline = None
         
     def path_latency(self, nodes: list[str]) -> float:
         """
@@ -60,6 +66,11 @@ class RoutingEngine:
             qtime = self.network.graph.nodes[u].get("qtime", 0.0)
             total += d_trasm + d_prop + qtime
         return total
+
+    def _check_deadline(self):
+        """Raise EpochTimeout if the deadline of the current re_routing call has passed."""
+        if self._deadline is not None and time.monotonic() > self._deadline:
+            raise EpochTimeout(f"epoch deadline exceeded ({self.epoch_timeout}s)")
 
     def diff_score(self, old_path: list[str], new_path: list[str]):
         """
@@ -133,7 +144,7 @@ class RoutingEngine:
         (ko-flows with zero candidates).
         """
         flowsNodes = {r.flow_id: self.kb.get_path_by_id(r.path_id) for r in ko_flows}
-        ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size), reverse=True)
+        ko_flows.sort(key=lambda routing: self.config.flows[routing.flow_id].required_bw(self.config.pckt_size))
         temp_koflows = list(ko_flows)
 
         paths = self.kb.get_all_paths()
@@ -194,6 +205,7 @@ class RoutingEngine:
             self.last_time_strategy = 0.0
             self.last_time_prolog_strategy = 0.0
             return ok_flows, [], 0
+        self._deadline = time.monotonic() + self.epoch_timeout if self.epoch_timeout else None
         t0 = time.perf_counter()
         no_path_count = self._generate_candidates(ko_flows)
         self.last_time_strategy = time.perf_counter() - t0 #save time execution of the generation candidates strategy
@@ -209,18 +221,34 @@ class RoutingEngine:
         return self.kb.query_repair(ko_flows, ok_flows)
 
     def resolve_exhaustive_routing(self, ko_flows: list[Routing], ok_flows: list[Routing]):
-        """Alternate prolog_strategy: exhaustiveRouting/3, then pick the best solution."""
-        solutions = self.kb.query_exhaustive_routings(ko_flows, ok_flows)
+        """
+        Alternate prolog_strategy: enumerate every feasible repair, then pick
+        the best one. Same return shape as resolve_repair.
+
+        Raises EpochTimeout if the epoch deadline expires during the search.
+        """
+        remaining = None
+        if self._deadline is not None:
+            self._check_deadline()
+            remaining = self._deadline - time.monotonic()
+        try:
+            solutions = self.kb.query_exhaustive_routings(ko_flows, ok_flows, time_limit=remaining)
+        except JanusKB.JanusKBError as e:
+            if "Time limit exceeded" in str(e):
+                raise EpochTimeout(f"epoch deadline exceeded ({self.epoch_timeout}s)") from e
+            raise
         return self.select_best_exhaustive_solution(solutions, ko_flows, ok_flows)
 
     def select_best_exhaustive_solution(self, solutions: list[list[Routing]], ko_flows: list[Routing], ok_flows: list[Routing]):
         """
-        Pick the best of exhaustiveRouting/3's per-permutation solutions.
+        Pick the best of the enumerated solutions.
         Priority: 1. fewest failed flows; 2. lowest total symmetric diff
         (failed flows score as full removal cost, diff_score(old, []));
         3. lowest average latency among routed flows.
         Returns (new_valid_routings, failed_routings), same shape as
         resolve_repair.
+
+        Raises EpochTimeout if the epoch deadline expires while scoring.
         """
         if not solutions:
             raise RoutingEngineError("select_best_exhaustive_solution: no solutions to choose from")
@@ -235,7 +263,9 @@ class RoutingEngine:
             return path_nodes_cache[path_id]
 
         scored = []
-        for solution in solutions:
+        for i, solution in enumerate(solutions):
+            if i % 1000 == 0:
+                self._check_deadline()
             routed_by_flow = {r.flow_id: r for r in solution if r.flow_id in ko_flow_ids}
             failed_flow_ids = ko_flow_ids - routed_by_flow.keys()
 
@@ -421,6 +451,7 @@ class RoutingEngine:
         tmp_candidates = []
         try:
             for c in nx.all_simple_paths(graph_pruned, src, dst, cutoff=cutoff):
+                self._check_deadline()
                 score = self.diff_score(old_path, c)
                 latency = self.path_latency(c)
                 tmp_candidates.append((score, latency, c))

@@ -15,15 +15,15 @@ import pandas as pd
 sys.path.insert(0, str(Path(__file__).parent))
 logger = logging.getLogger(__name__)
 
-SEEDS = [104730, 224741, 350377, 479915, 611953, 742073, 871871, 1003001, 1234567, 15485863]
+SEEDS = [104730, 224741, 350377, 479915, 611953]
 SIZES          = [20, 25, 30, 35, 40]
 NUM_FLOWS_LIST = [3, 4, 5, 6]
-PCT_MODS       = [0.25, 0.35, 0.45] #se vado oltre questo pctmod si alzano troppo i no_path_count se non garantisco un alternativa l'esperimento perde di senso
+PCT_MODS       = [0.25, 0.35, 0.45]
 DEGRADE_FACTOR = (0.05, 0.3)
 EPOCHS         = 10
-STRATEGIES     = ["latency_biased_paths", "biased_k_shortest_path_latency", "biased_k_shortest_path", "exhaustive_optimal"]
+EPOCH_TIMEOUT  = float(os.environ.get("EPOCH_TIMEOUT", 1800)) or None
+STRATEGIES     = ["biased_k_shortest_path_latency", "exhaustive_optimal"]
 INIT_STRATEGY  = "biased_k_shortest_path_latency"
-PERTURBATION   = "classic"  # solo per il log auto-descrittivo -- tenere allineato a _run_epoch
 #scaling factors for bandwidths demand
 RR_LINK_BW_RANGE = (15.0, 35.0)
 IAAG_BW_SCALE = 0.2
@@ -118,37 +118,6 @@ def _build_system(topology: str, n: int, num_flows: int, seed: int, topo_file: s
     
     return network, kb, engine, ctrl
 
-
-def _perturb_epoch(network, kb, engine, pct_mod: float, rng: random.Random) -> int:
-    """
-    Break one router-router edge on a pct_mod share of routed flows' own
-    paths, forcing each below its required bandwidth.
-
-    Targeted rather than random: only the chosen flows' own edges are cut,
-    so other flows' alternatives stay intact. `routed` is sorted by flow_id
-    because KB order tracks Prolog retract/reassert history, not flow
-    identity, which would otherwise make rng.sample non-reproducible.
-
-    Returns:
-        Number of flows actually hit (a target is skipped if its path has
-        no router-router edge).
-    """
-    
-    routed = sorted(((fid, nodes) for fid, (_, nodes) in _active_routes(kb).items() if nodes), key=lambda x: x[0])
-    targets = rng.sample(routed, min(max(1, int(pct_mod * len(routed))), len(routed)))
-
-    changes = []
-    for flow_id, nodes in targets:
-        rr = [(u, v) for u, v in zip(nodes[:-1], nodes[1:]) if not (u.startswith("h") or v.startswith("h"))]
-        if not rr:
-            logger.warning(f"[{engine.STRATEGY.__name__}] flow {flow_id} has no router-router edges to break, skipping")
-            continue
-        u, v = rng.choice(rr)
-        changes.append((u, v, 0.0))
-
-    _apply_bandwidth(network, kb, changes)
-    return len(changes)
-
 def _classic_perturbation (network, kb, engine, pct_mod: float, rng: random.Random) -> int:
     """
     Break one router-router edge on a pct_mod share of all edges, forcing each below its required bandwidth.
@@ -179,10 +148,11 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
     router-router links degraded, independent of who is routed where), then
     measure continuous reasoning.
 
-    Bandwidth resets every epoch so damage never accumulates; routing
-    itself persists, which is the point of "continuous" reasoning. Only CR
-    is measured -- this experiment compares candidate-search strategies
-    against exhaustive_optimal, not CR against FULL.
+    Bandwidth is reset here and _run_batch restores the post-INIT routing
+    before every call, so each epoch is an independent trial from the same
+    starting state and strategies are directly comparable epoch by epoch.
+    Only CR is measured -- this experiment compares candidate-search
+    strategies against exhaustive_optimal, not CR against FULL.
 
     Returns:
         Dict of this epoch's CR metrics (timing, KO/rerouted counts,
@@ -263,6 +233,7 @@ def _run_batch(config_base: dict) -> list:
         fd, topo_file = tempfile.mkstemp(suffix=".json")
         os.close(fd)
         network, kb, engine, ctrl = _build_system(topology, n, num_flows, seed, topo_file, strategy)
+        engine.epoch_timeout = EPOCH_TIMEOUT
 
         num_edges = len(network.graph.edges)
         sizes = {"num_edges": num_edges, "num_flows": num_flows}
@@ -275,7 +246,7 @@ def _run_batch(config_base: dict) -> list:
         for pct_mod in PCT_MODS:
             # clean restart: bandwidth -> nominal, routing -> post-init
             _reset_to_nominal(network, kb, rr_edges)
-            kb.restore_kb_state(post_init_snapshot)
+            # routing is restored at the start of each epoch (below)
 
             # private RNG: the perturbation sequence is a function of
             # (seed, pct_mod) only, independent of the engine's RNG usage
@@ -283,6 +254,7 @@ def _run_batch(config_base: dict) -> list:
 
             for epoch in range(epochs):
                 try:
+                    kb.restore_kb_state(post_init_snapshot)  # every epoch restarts from the post-INIT state
                     measures = _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng)
                     p_ko = measures["N_KO"] / num_flows if num_flows > 0 else 0.0
                     p_r  = measures["N_RR"]  / num_flows if num_flows > 0 else 0.0
@@ -290,7 +262,6 @@ def _run_batch(config_base: dict) -> list:
                 except Exception as e:
                     results.append(_make_row(base, pct_mod, epoch, **sizes, ok=False, error=str(e)))
                     logger.warning(f"[{strategy} {topology} n={n} seed={seed}] "f"pct={pct_mod} epoch {epoch + 1} failed: {e}")
-                    break
                 
     except Exception as e:
         logger.warning(f"[{strategy} {topology} n={n} seed={seed}] batch failed: {e}")
@@ -331,7 +302,8 @@ def main():
     os.environ["RAY_local_fs_capacity_threshold"] = "0.99"
     RESULTS_DIR.mkdir(exist_ok=True)
     NUM_WORKERS   = int(os.environ.get("NUM_WORKERS", 7))
-    BATCH_TIMEOUT = int(os.environ.get("BATCH_TIMEOUT", 3600))  
+    # default: worst case (every epoch runs to EPOCH_TIMEOUT) plus 1 h for topology/INIT, so it never pre-empts EPOCH_TIMEOUT
+    BATCH_TIMEOUT = int(os.environ.get("BATCH_TIMEOUT", len(PCT_MODS) * EPOCHS * (EPOCH_TIMEOUT or 0) + 3600))
     WAIT_POLL = 30  # seconds between checks for timed-out batches
 
     OUTPUT_CSV = sys.argv[1] if len(sys.argv) > 1 else "heuristic_benchmark.csv"
@@ -353,10 +325,10 @@ def main():
     # self-describing log
     commit = subprocess.run(["git", "rev-parse", "--short", "HEAD"], cwd=REPO_ROOT,
                              capture_output=True, text=True).stdout.strip()
-    print(f"commit={commit} | STRATEGIES={STRATEGIES} | PERTURBATION={PERTURBATION} "
+    print(f"commit={commit} | STRATEGIES={STRATEGIES}"
           f"| PCT_MODS={PCT_MODS} | DEGRADE_FACTOR={DEGRADE_FACTOR} "
           f"| RR_LINK_BW_RANGE={RR_LINK_BW_RANGE} | IAAG_BW_SCALE={IAAG_BW_SCALE} "
-          f"| SIZES={SIZES} | NUM_FLOWS_LIST={NUM_FLOWS_LIST}")
+          f"| SIZES={SIZES} | NUM_FLOWS_LIST={NUM_FLOWS_LIST} | EPOCHS={EPOCHS} | EPOCH_TIMEOUT={EPOCH_TIMEOUT}")
 
     # sliding window: keeps exactly NUM_WORKERS batches active.
     # ObjectRef -> (config, launch time), the latter only for the elapsed-time print.
@@ -421,7 +393,7 @@ def main():
                 results.extend(_dead_batch_rows(cfg, f"batch exceeded BATCH_TIMEOUT={BATCH_TIMEOUT}s"))
                 timed_out_batches += 1
                 done_batches += 1
-                print(f"  [TIMEOUT] strat={cfg['strategy']} topo={cfg['topology']} "
+                print(f"  [TIMEOUT] strat={cfg['strategy']} topo={cfg['topology']}"
                       f"n={cfg['n']} nf={cfg['num_flows']} seed={cfg['seed']} "
                       f"after {now - t0:.0f}s -- cancelled", flush=True)
                 _launch_next()

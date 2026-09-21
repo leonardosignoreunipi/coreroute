@@ -161,13 +161,28 @@ class JanusKB:
             logger.error(f"Error in recalculation: {e}")
             raise JanusKBError(f"Error in recalculation: {e}")
 
-    def query_exhaustive_routings(self, koflows: List[Routing], okflows: List[Routing]) -> List[List[Routing]]:
+    def query_exhaustive_routings(self, koflows: List[Routing], okflows: List[Routing], time_limit: float = None) -> List[List[Routing]]:
         """
-        Run exhaustiveRouting/3 and return every permutation's routing list
-        (len(koflows)! of them), UNRESOLVED to a single winner. Failed flows
-        per permutation aren't included (routing_core.pl's loop/3 discards
-        them) -- derive via set difference against koflows if needed.
-        Raises JanusKBError on failure.
+        Enumerate every feasible repair of the ko-flows and return all of
+        them, UNRESOLVED to a single winner: the caller ranks them.
+
+        Runs repair/4 with full backtracking on a single flow order: each
+        ko-flow takes any valid candidate path or is left out, so every
+        feasible combination appears once (feasibility does not depend on
+        the order). Failed flows aren't reported -- derive them by set
+        difference against koflows.
+
+        Args:
+            koflows: routings to repair, with their previous path ids.
+            okflows: routings that already hold a valid path.
+            time_limit: seconds after which the search is aborted
+                (None = no limit).
+
+        Returns:
+            One list of Routing per feasible solution (ok-flows included).
+
+        Raises JanusKBError on failure, with "Time limit exceeded" in the
+        message when time_limit expires.
         """
         ko_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in koflows]
         ok_terms = [f"routing('{r.flow_id}', '{r.path_id}')" for r in okflows]
@@ -176,14 +191,23 @@ class JanusKB:
         ok_list = f"[{', '.join(ok_terms)}]"
 
         query = f"""
-            exhaustiveRouting({ko_list}, {ok_list}, _Sols),
-            findall(_S,
-                    ( member(_R, _Sols),
-                      findall(_{{flowId: _F, pathId: _P}}, member(routing(_F, _P), _R), _S) ),
-                    Solutions).
-        """
+                    findall(
+                        _Solution,
+                            (
+                            repair({ko_list}, {ok_list}, _Routings, _Failed),
+                            findall(
+                            _{{flowId: _F, pathId: _P}},
+                            member(routing(_F, _P), _Routings),
+                            _Solution
+                        )
+                    ),
+                    Solutions
+                    ).
+                    """
 
         try:
+            if time_limit is not None:
+                query = f"call_with_time_limit({max(time_limit, 0.001)}, ({query.strip().rstrip('.')}))."
             result = j.query_once(query)
             solutions = [
                 [Routing(flow_id=d["flowId"], path_id=d["pathId"]) for d in sol]
