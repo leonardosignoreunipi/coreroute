@@ -148,9 +148,9 @@ def _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng) -> dict:
     router-router links degraded, independent of who is routed where), then
     measure continuous reasoning.
 
-    Bandwidth is reset here and _run_batch restores the post-INIT routing
-    before every call, so each epoch is an independent trial from the same
-    starting state and strategies are directly comparable epoch by epoch.
+    Bandwidth is reset here every epoch (independent draws), but routing is
+    NOT: it carries over from the previous epoch, so each pct_mod is a
+    10-epoch trajectory, reset to post-INIT only when a new pct_mod starts.
     Only CR is measured -- this experiment compares candidate-search
     strategies against exhaustive_optimal, not CR against FULL.
 
@@ -201,8 +201,9 @@ def _make_row(base: dict, pct_mod: float, epoch: int, **values) -> dict:
 def _run_batch(config_base: dict) -> list:
     """
     Run one full (topology, n, num_flows, seed, strategy) cell: build the
-    system, then for each pct_mod replay `epochs` perturb-and-measure
-    cycles from the same post-INIT snapshot.
+    system, then for each pct_mod run an `epochs`-long trajectory of
+    perturb-and-measure cycles, each pct_mod resetting to the post-INIT
+    snapshot before its own trajectory starts.
 
     Args:
         config_base: strategy/topology/n/num_flows/seed, plus optional
@@ -244,9 +245,8 @@ def _run_batch(config_base: dict) -> list:
         post_init_snapshot = kb.snapshot_kb_state()
 
         for pct_mod in PCT_MODS:
-            # clean restart: bandwidth -> nominal, routing -> post-init
             _reset_to_nominal(network, kb, rr_edges)
-            # routing is restored at the start of each epoch (below)
+            kb.restore_kb_state(post_init_snapshot)
 
             # private RNG: the perturbation sequence is a function of
             # (seed, pct_mod) only, independent of the engine's RNG usage
@@ -254,7 +254,6 @@ def _run_batch(config_base: dict) -> list:
 
             for epoch in range(epochs):
                 try:
-                    kb.restore_kb_state(post_init_snapshot)  # every epoch restarts from the post-INIT state
                     measures = _run_epoch(network, kb, engine, ctrl, rr_edges, pct_mod, rng)
                     p_ko = measures["N_KO"] / num_flows if num_flows > 0 else 0.0
                     p_r  = measures["N_RR"]  / num_flows if num_flows > 0 else 0.0
